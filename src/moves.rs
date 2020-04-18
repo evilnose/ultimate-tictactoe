@@ -120,8 +120,8 @@ impl Moves {
         self.occupancy[index as usize / 63] & 1u64 << (index % 63) != 0
     }
 
-    pub fn size(&self) -> u32 {
-        return self.occupancy[0].count_ones() + self.occupancy[1].count_ones();
+    pub fn size(&self) -> u64 {
+        return (self.occupancy[0].count_ones() + self.occupancy[1].count_ones()) as u64;
     }
 }
 
@@ -458,12 +458,12 @@ impl Position {
     }
 }
 
-pub fn perft(depth: u16, pos: &mut Position) -> u32 {
+pub fn perft(depth: u16, pos: &mut Position) -> u64 {
     pos.assert();
     if depth == 0 {
         return pos.legal_moves().size();
     }
-    let mut count: u32 = 0;
+    let mut count: u64 = 0;
 
     for mov in pos.legal_moves() {
         let mut temp = pos.clone();
