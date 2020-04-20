@@ -20,6 +20,6 @@ fn draw_in_5() {
 fn early_mid() {
     let move_list = "0, 3, 27, 4, 36, 5, 46, 13, 37, 12, 28, 14";
     let mut pos = Position::new();
-    let count = perft(10, &mut pos);
+    let count = perft(7, &mut pos);
     println!("{}", count);
 }

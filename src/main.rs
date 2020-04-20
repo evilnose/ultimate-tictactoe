@@ -3,7 +3,6 @@ extern crate hex;
 
 // mod moves;
 use uttt::moves::{Position, perft, perft_with_progress};
-// use uttt::moves::io;
 
 fn main() {
     // static BOARD: &str =
