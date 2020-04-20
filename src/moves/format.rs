@@ -1,0 +1,175 @@
+/* For importing/exporting positions based on formats */
+use crate::moves::*;
+
+// convert from row-major indexing to bitboard indexing
+macro_rules! to_bb_index {
+    ($row:expr, $col:expr) => {{
+        let row: usize = $row;
+        let col: usize = $col;
+        let bi = ((row / 3) * 3 + (col / 3));
+        let small_row = row % 3;
+        let small_col = col % 3;
+        (bi * 9 + (small_row * 3 + small_col)) as u16
+    }};
+}
+
+impl Position {
+    pub fn from_board(repr: &str) -> Position {
+        assert!(repr.len() == 133);
+        let mut pos = Position::new();
+        let mut n_x = 0;
+        let mut n_o = 0;
+        for (i, c) in repr.chars().enumerate() {
+            if i == 132 {
+                // 11 * 12 + 1 (space) + 1 (block index) - 1
+                if c == '-' {
+                    pos.last_block = 9;
+                } else {
+                    pos.last_block = c as u8 - '0' as u8;
+                }
+                break;
+            }
+            if i % 4 == 3 || (i / 12) % 4 == 3 || i == 131 || i % 12 == 11 {
+                continue;
+            }
+            if c == 'X' || c == 'O' {
+                let col = match i % 12 {
+                    0..=2 => i % 12,
+                    4..=6 => i % 12 - 1,
+                    8..=10 => i % 12 - 2,
+                    _ => panic!("Bad index"),
+                };
+                let row = match i / 12 {
+                    0..=2 => i / 12,
+                    4..=6 => i / 12 - 1,
+                    8..=10 => i / 12 - 2,
+                    _ => panic!("Bad index"),
+                };
+                let index = to_bb_index!(row, col);
+                let side = match c {
+                    'X' => {
+                        n_x += 1;
+                        Side::X
+                    }
+                    'O' => {
+                        n_o += 1;
+                        Side::O
+                    }
+                    _ => panic!("Impossible"),
+                };
+                let own_bb = &mut pos.bitboards[side as usize];
+                // TODO update hopeless_occ
+            }
+        }
+        pos.to_move = match n_x - n_o {
+            0 => Side::X,
+            1 => Side::O,
+            _ => panic!("Number of X and O not possible"),
+        };
+        return pos;
+    }
+
+    pub fn to_pretty_board(&self) -> String {
+        // 266 = 24 * 11 + 2
+        // fill with space first
+        let mut repr: [char; 266] = [' '; 266];
+    
+        // place pieces
+        for row in 0..9 {
+            let row_offset = row / 3;
+            for col in 0..9 {
+                let col_offset = col / 3;
+    
+                // compute index in output string
+                let out_row = row + row_offset;
+                let out_col = 2 * (col + col_offset) + 1;
+                let out_ind = out_row * 24 + out_col;
+    
+                let index = to_bb_index!(row, col);
+    
+                if self.bitboards[Side::X as usize].get(index) {
+                    repr[out_ind as usize] = 'X';
+                } else if self.bitboards[Side::O as usize].get(index) {
+                    repr[out_ind as usize] = 'O';
+                } else {
+                    repr[out_ind as usize] = '-';
+                }
+            }
+        }
+    
+        // place newlines
+        for row in 0..10 {
+            repr[23 + 24 * row] = '\n';
+        }
+    
+        // place vertical bars
+        for row in 0..11 {
+            repr[24 * row + 7] = '|';
+            repr[24 * row + 15] = '|';
+        }
+    
+        // place horizontal bars
+        for col in 0..23 {
+            repr[24 * 3 + col] = '-';
+            repr[24 * 7 + col] = '-';
+        }
+    
+        repr[263] = match self.to_move {
+            Side::X => 'X',
+            Side::O => 'O',
+        };
+        repr[264] = match self.last_block {
+            0..=8 => ('0' as u8 + self.last_block) as char,
+            9 => '-',
+            _ => panic!("last_block out of bounds: {}", self.last_block),
+        };
+        repr[265] = '\n';
+    
+        // for aesthetics
+        repr[79] = '|';
+        repr[183] = '|';
+    
+        return repr.iter().collect::<String>();
+    }
+
+    pub fn from_bgn(repr: &str) {
+        let mut tokens = repr.split_whitespace();
+        let level = tokens.next();
+
+        // only support level 2 ultimate tic-tac-toe
+        assert_eq!(level, Some("2"));
+
+
+        let x_board = tokens.next().unwrap();
+        let o_board = tokens.next().unwrap();
+
+        let focus_block = tokens.next().unwrap();
+        assert_eq!(focus_block.len(), 1);
+        // TODO
+    }
+
+    pub fn to_bgn(&self, repr: &str) {
+        // TODO
+    }
+
+    // comma separated list of moves
+    pub fn from_move_list(repr: &str) -> Position {
+        let mut pos = Position::new();
+        let tokens = repr.split(",");
+        for tok in tokens {
+            let tok = tok.trim();
+            pos.make_move(tok.parse::<Idx>().unwrap());
+        }
+        return pos;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::moves::Position;
+
+    #[test]
+    fn load_bgn() {
+        // let pos = Position::from_bgn("3");
+    }
+}
