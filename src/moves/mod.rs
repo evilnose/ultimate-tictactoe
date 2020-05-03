@@ -120,12 +120,12 @@ struct Bitboard {
 }
 
 impl Bitboard {
-    pub fn new() -> Bitboard {
+    fn new() -> Bitboard {
         Bitboard { occupancy: [0; 2] }
     }
 
     // returns block index
-    pub fn set(&mut self, index: Idx) -> u8 {
+    fn set(&mut self, index: Idx) -> u8 {
         assert!(index < BOARD_SIZE);
         assert_eq!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
@@ -135,14 +135,14 @@ impl Bitboard {
 
         // update block occupancy if won this block
         let block_i = index as u8 / 9;
-        let block = self.block_occ(block_i);
+        let block = self.get_block(block_i);
         self.occupancy[1] |= (block_won(block) as u64) << (18 + block_i);
 
         return block_i;
     }
 
     // returns large hopeless block occ if a block becomes hopeful again
-    pub fn unset(&mut self, index: Idx) -> u8 {
+    fn unset(&mut self, index: Idx) -> u8 {
         assert!(index < BOARD_SIZE);
         assert_ne!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
@@ -152,14 +152,23 @@ impl Bitboard {
 
         // update block occupancy if un-won this block
         let block_i = index as u8 / 9;
-        let block = self.block_occ(block_i);
+        let block = self.get_block(block_i);
         self.occupancy[1] &= !((block_won(block) as u64) << (18 + block_i));
         // return (block_hopeless(block) as B33) << block_i;
         return block_i;
     }
 
+    // NOTE block must be empty before this
+    fn set_block(&mut self, block_i: u8, occ: B33) {
+        assert_eq!(occ & !BLOCK_OCC, 0);
+        // set
+        self.occupancy[block_i as usize / 7] |= (occ as u64) << ((block_i % 7) * 9); 
+        // set
+        self.occupancy[1] |= (block_won(occ) as u64) << (18 + block_i);
+    }
+
     // return aligned occupancy for one block
-    fn block_occ(&self, block_i: u8) -> B33 {
+    pub fn get_block(&self, block_i: u8) -> B33 {
         ((self.occupancy[block_i as usize / 7] >> ((block_i % 7) * 9)) as B33) & BLOCK_OCC
     }
 
@@ -242,14 +251,20 @@ impl Position {
         block_won(self.bitboards[side as usize].captured_occ())
     }
 
+    // TODO use this for eval
     #[inline(always)]
     pub fn is_drawn(&self) -> bool {
         block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
     }
 
     #[inline(always)]
+    pub fn is_full(&self) -> bool {
+        self.full_blocks == BLOCK_OCC
+    }
+
+    #[inline(always)]
     pub fn is_over(&self) -> bool {
-        self.is_won(Side::X) || self.is_won(Side::O) || self.is_drawn()
+        self.is_won(Side::X) || self.is_won(Side::O) || self.is_full()
     }
 
     fn add_block_moves(&self, block_i: u8, moves: &mut Moves) {
@@ -264,14 +279,14 @@ impl Position {
 
     #[inline(always)]
     fn both_block_occ(&self, block_i: u8) -> B33 {
-        self.bitboards[0].block_occ(block_i) | self.bitboards[1].block_occ(block_i)
+        self.bitboards[0].get_block(block_i) | self.bitboards[1].get_block(block_i)
     }
 
     pub fn make_move(&mut self, index: Idx) {
         // place piece
         let own_bb = &mut self.bitboards[self.to_move as usize];
         let bi = own_bb.set(index);
-        let block_occ = own_bb.block_occ(bi);
+        let block_occ = own_bb.get_block(bi);
 
         // update full block
         self.full_blocks |= (self.is_block_full(bi) as B33) << bi;
@@ -291,7 +306,7 @@ impl Position {
 
         let own_bb = &mut self.bitboards[self.to_move as usize];
         let bi = own_bb.unset(index);
-        let block_occ = own_bb.block_occ(bi);
+        let block_occ = own_bb.get_block(bi);
 
         // update full block
         self.full_blocks &= !(1 << bi);

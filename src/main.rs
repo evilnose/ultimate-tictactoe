@@ -1,5 +1,4 @@
 extern crate bit_vec;
-extern crate hex;
 
 // mod moves;
 use uttt::moves::{Position, perft, perft_with_progress};
