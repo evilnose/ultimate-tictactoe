@@ -19,7 +19,6 @@ fn draw_in_5() {
 #[test]
 fn early_mid() {
     let move_list = "0, 3, 27, 4, 36, 5, 46, 13, 37, 12, 28, 14";
-    let mut pos = Position::new();
-    let count = perft(7, &mut pos);
-    println!("{}", count);
+    let mut pos = Position::from_move_list(move_list);
+    assert_eq!(perft(5, &mut pos), 4876350);
 }

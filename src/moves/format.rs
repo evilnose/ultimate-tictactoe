@@ -1,5 +1,7 @@
 /* For importing/exporting positions based on formats */
+
 use crate::moves::*;
+use std::i64;
 
 // convert from row-major indexing to bitboard indexing
 macro_rules! to_bb_index {
@@ -73,20 +75,16 @@ impl Position {
         // 266 = 24 * 11 + 2
         // fill with space first
         let mut repr: [char; 266] = [' '; 266];
-    
         // place pieces
         for row in 0..9 {
             let row_offset = row / 3;
             for col in 0..9 {
                 let col_offset = col / 3;
-    
                 // compute index in output string
                 let out_row = row + row_offset;
                 let out_col = 2 * (col + col_offset) + 1;
                 let out_ind = out_row * 24 + out_col;
-    
                 let index = to_bb_index!(row, col);
-    
                 if self.bitboards[Side::X as usize].get(index) {
                     repr[out_ind as usize] = 'X';
                 } else if self.bitboards[Side::O as usize].get(index) {
@@ -96,24 +94,20 @@ impl Position {
                 }
             }
         }
-    
         // place newlines
         for row in 0..10 {
             repr[23 + 24 * row] = '\n';
         }
-    
         // place vertical bars
         for row in 0..11 {
             repr[24 * row + 7] = '|';
             repr[24 * row + 15] = '|';
         }
-    
         // place horizontal bars
         for col in 0..23 {
             repr[24 * 3 + col] = '-';
             repr[24 * 7 + col] = '-';
         }
-    
         repr[263] = match self.to_move {
             Side::X => 'X',
             Side::O => 'O',
@@ -124,32 +118,78 @@ impl Position {
             _ => panic!("last_block out of bounds: {}", self.last_block),
         };
         repr[265] = '\n';
-    
         // for aesthetics
         repr[79] = '|';
         repr[183] = '|';
-    
         return repr.iter().collect::<String>();
     }
 
-    pub fn from_bgn(repr: &str) {
+    pub fn from_bgn(repr: &str) -> Position {
+        let mut pos = Position::new();
         let mut tokens = repr.split_whitespace();
         let level = tokens.next();
 
         // only support level 2 ultimate tic-tac-toe
         assert_eq!(level, Some("2"));
 
+        let x_board = tokens.next().expect("too few tokens!");
+        let o_board = tokens.next().expect("too few tokens!");
 
-        let x_board = tokens.next().unwrap();
-        let o_board = tokens.next().unwrap();
-
-        let focus_block = tokens.next().unwrap();
+        let focus_block = tokens.next().expect("too few tokens: need focus block");
         assert_eq!(focus_block.len(), 1);
-        // TODO
+
+        let x_count = pos.init_bgn_bb(Side::X, x_board);
+        let o_count = pos.init_bgn_bb(Side::O, o_board);
+        if x_count == o_count {
+            pos.to_move = Side::X;
+        } else if x_count - o_count == 1 {
+            pos.to_move = Side::O;
+        } else {
+            panic!("incorrect number of X/O pieces!");
+        }
+
+        pos.last_block = focus_block.parse().unwrap();
+        return pos;
     }
 
-    pub fn to_bgn(&self, repr: &str) {
+    pub fn to_bgn(&self) -> String {
         // TODO
+        let x_board = self.to_bgn_str(Side::X);
+        let o_board = self.to_bgn_str(Side::O);
+        return format!("2 {} {} {}", x_board, o_board, self.last_block);
+    }
+    
+    // initialize bitboard of side using repr, a string of blocks
+    // represented by hex, separated by "/"
+    fn init_bgn_bb(&mut self, side: Side, repr: &str) -> u32 {
+        let bitboard = &mut self.bitboards[side as usize];
+        let mut tokens = repr.split("/");
+        
+        let mut count: u32 = 0;
+        for bi in 0..9 {
+            let tok = tokens.next().expect("too few blocks given. 9 expected");
+            let occ = i64::from_str_radix(tok.trim(), 16).expect("could not parse hex string") as B33;
+            count += occ.count_ones();
+            bitboard.set_block(bi, occ);
+            // update full block
+            if occ == BLOCK_OCC {
+                self.full_blocks |= 1 << bi;
+            }
+            // update hopeless occ
+            self.hopeless_occ[self.to_move as usize] |= (block_hopeless(occ) as B33) << bi;
+        }
+        
+        return count;
+    }
+
+    fn to_bgn_str(&self, side: Side) -> String {
+        let bitboard = self.bitboards[side as usize];
+        let mut str_list = Vec::new();
+        for bi in 0..9 {
+            let occ = bitboard.get_block(bi);
+            str_list.push(format!("{:x}", occ));
+        }
+        return str_list.join("/");
     }
 
     // comma separated list of moves
@@ -161,15 +201,5 @@ impl Position {
             pos.make_move(tok.parse::<Idx>().unwrap());
         }
         return pos;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::moves::Position;
-
-    #[test]
-    fn load_bgn() {
-        // let pos = Position::from_bgn("3");
     }
 }
