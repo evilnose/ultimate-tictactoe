@@ -117,7 +117,7 @@ fn command_evaluate(_: &mut SplitWhitespace, _: &mut Position) -> bool {
     unsafe {
         println!("{}", EVAL);
     }
-    return true;
+    return false;
 }
 
 fn main() {
