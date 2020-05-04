@@ -121,11 +121,11 @@ fn command_evaluate(_: &mut SplitWhitespace, _: &mut Position) -> bool {
 }
 
 fn main() {
-    // let mut pos = Position::new();
-    let move_list = "0, 1, 9, 4, 36, 7, 70, 71, 79, 67, 43, 63, 20, 21,\
-    31, 40, 37, 13, 38, 23, 49, 22, 10, 14, 52, 55, 11,\
-    50, 46, 30, 29, 27, 32, 33, 58, 78, 59, 72, 57";
-    let mut pos = Position::from_move_list(move_list);
+    let mut pos = Position::new();
+    // let move_list = "0, 1, 9, 4, 36, 7, 70, 71, 79, 67, 43, 63, 20, 21,\
+    // 31, 40, 37, 13, 38, 23, 49, 22, 10, 14, 52, 55, 11,\
+    // 50, 46, 30, 29, 27, 32, 33, 58, 78, 59, 72, 57";
+    // let mut pos = Position::from_move_list(move_list);
     let mut player_move = pos.side_to_move() == Side::X;
     let mut stdin = io::stdin();
     loop {
