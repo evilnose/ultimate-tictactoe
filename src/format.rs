@@ -47,7 +47,6 @@ impl Position {
                     8..=10 => i / 12 - 2,
                     _ => panic!("Bad index"),
                 };
-                let index = to_bb_index!(row, col);
                 let side = match c {
                     'X' => {
                         n_x += 1;

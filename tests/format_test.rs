@@ -1,4 +1,5 @@
 use uttt::moves::*;
+use uttt::format::*;
 
 #[test]
 fn test_bgn_bothways() {
@@ -10,4 +11,12 @@ fn test_bgn_bothways() {
     let pos1 = Position::from_bgn(&bgn);
     println!("{}", pos.to_bgn());
     assert_eq!(pos.to_pretty_board(), pos1.to_pretty_board());
+}
+
+#[test]
+fn temp_deleteme() {
+    let move_list = "0, 1, 10, 9, 4";
+    let pos = Position::from_move_list(move_list);
+    println!("{}", pos.to_pretty_board());
+    println!("{}", pos.to_bgn());
 }

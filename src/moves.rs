@@ -1,6 +1,4 @@
 use bitintr::*;
-
-pub mod format;
 /*
 Define block to be each 3x3 block of cells.
 Idxing is done block-by-block, row-major from
@@ -13,9 +11,10 @@ the top-left block:
 ==========================
 ...      |   ...    | ...
 */
-type B33 = u16;
+pub(crate) type B33 = u16;
 pub type Idx = u16;
 const BOARD_SIZE: Idx = 81;
+pub const NULL_IDX: Idx = 81;
 
 macro_rules! to_local_index {
     ($index:expr) => {{
@@ -47,10 +46,18 @@ static HOPELESS_TABLE: [u64; 8] = [0; 8];
 //     }};
 // }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Side {
     X = 0,
     O = 1,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum GameResult {
+    X_WON = 0,
+    O_WON = 1,
+    DRAW = 2,
+    ONGOING = 3,
 }
 
 impl Side {
@@ -62,15 +69,15 @@ impl Side {
     }
 }
 
-static BLOCK_OCC: B33 = 0b111111111;
+pub(crate) static BLOCK_OCC: B33 = 0b111111111;
 
-fn block_won(occ: B33) -> bool {
+pub(crate) fn block_won(occ: B33) -> bool {
     assert_eq!(occ & !BLOCK_OCC, 0);
     WIN_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
 
 // returns true if winning is hopeless for THE OTHER SIDE
-fn block_hopeless(occ: B33) -> bool {
+pub(crate) fn block_hopeless(occ: B33) -> bool {
     assert_eq!(occ & !BLOCK_OCC, 0);
     HOPELESS_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
@@ -90,7 +97,11 @@ impl Moves {
     }
 
     pub fn size(&self) -> u32 {
-        return self.occupancy[0].count_ones() + self.occupancy[1].count_ones();
+        self.occupancy[0].count_ones() + self.occupancy[1].count_ones()
+    }
+
+    pub fn contains(&self, index: Idx) -> bool {
+        self.occupancy[index as usize / 63] & (1u64 << (index % 63)) != 0
     }
 }
 
@@ -112,7 +123,7 @@ impl Iterator for Moves {
 }
 
 #[derive(Copy, Clone)]
-struct Bitboard {
+pub(crate) struct Bitboard {
     // occupancy[0]: first 63 bits: first 7 blocks;
     // occupancy[1]: first 18 bits: last 2 blocks;
     //               next 9 bits: block occ
@@ -159,10 +170,10 @@ impl Bitboard {
     }
 
     // NOTE block must be empty before this
-    fn set_block(&mut self, block_i: u8, occ: B33) {
+    pub fn set_block(&mut self, block_i: u8, occ: B33) {
         assert_eq!(occ & !BLOCK_OCC, 0);
         // set
-        self.occupancy[block_i as usize / 7] |= (occ as u64) << ((block_i % 7) * 9); 
+        self.occupancy[block_i as usize / 7] |= (occ as u64) << ((block_i % 7) * 9);
         // set
         self.occupancy[1] |= (block_won(occ) as u64) << (18 + block_i);
     }
@@ -172,14 +183,14 @@ impl Bitboard {
         ((self.occupancy[block_i as usize / 7] >> ((block_i % 7) * 9)) as B33) & BLOCK_OCC
     }
 
-    fn get(&self, index: Idx) -> bool {
+    pub fn get(&self, index: Idx) -> bool {
         if index >= BOARD_SIZE {
             panic!("Bitboard::get() out of bounds")
         }
         (self.occupancy[index as usize / 63] & ((1 as u64) << (index % 63))) != 0
     }
 
-    fn captured_occ(&self) -> B33 {
+    pub fn captured_occ(&self) -> B33 {
         ((self.occupancy[1] >> 18) as B33) & BLOCK_OCC
     }
 
@@ -198,11 +209,11 @@ Need 81 * 2 bits for each player's general board
 */
 #[derive(Copy, Clone)]
 pub struct Position {
-    bitboards: [Bitboard; 2],
-    to_move: Side,
-    full_blocks: B33,       // occupancy of blocks that are full
-    hopeless_occ: [B33; 2], // occupancy of blocks that cannot be won
-    last_block: u8,
+    pub(crate) bitboards: [Bitboard; 2],
+    pub(crate) to_move: Side,
+    pub(crate) full_blocks: B33, // occupancy of blocks that are full
+    pub(crate) hopeless_occ: [B33; 2], // occupancy of blocks that cannot be won
+    pub(crate) last_block: u8,
 }
 
 const ANY_BLOCK: u8 = 9;
@@ -247,24 +258,46 @@ impl Position {
     }
 
     #[inline(always)]
+    pub fn get_result(&self) -> GameResult {
+        if self.is_won(Side::X) {
+            return GameResult::X_WON;
+        } else if self.is_won(Side::O) {
+            return GameResult::O_WON;
+        } else if self.is_drawn() {
+            return GameResult::DRAW;
+        } else {
+            return GameResult::ONGOING;
+        }
+    }
+
+    #[inline(always)]
+    pub fn side_to_move(&self) -> Side {
+        self.to_move
+    }
+
+    #[inline(always)]
     pub fn is_won(&self, side: Side) -> bool {
         block_won(self.bitboards[side as usize].captured_occ())
     }
 
     // TODO use this for eval
+    // This is test for if the game cannot be won anymore. In contrast
+    // to is_drawn which only returns true for boards without any more moves.
     #[inline(always)]
-    pub fn is_drawn(&self) -> bool {
+    pub fn is_dead_drawn(&self) -> bool {
+        panic!("is_dead_drawn() not implemented. You probably want is_draw() for now");
         block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
     }
 
     #[inline(always)]
-    pub fn is_full(&self) -> bool {
-        self.full_blocks == BLOCK_OCC
+    pub fn is_drawn(&self) -> bool {
+        self.full_blocks | self.bitboards[0].captured_occ() | self.bitboards[1].captured_occ()
+            == BLOCK_OCC
     }
 
     #[inline(always)]
     pub fn is_over(&self) -> bool {
-        self.is_won(Side::X) || self.is_won(Side::O) || self.is_full()
+        self.is_won(Side::X) || self.is_won(Side::O) || self.is_drawn()
     }
 
     fn add_block_moves(&self, block_i: u8, moves: &mut Moves) {
@@ -325,7 +358,9 @@ impl Position {
     }
 
     #[allow(dead_code)]
-    pub fn assert(&self) {
+    // returns bool so that we can put this in an assert! macro and
+    // not have this code run in production
+    pub fn assert(&self) -> bool {
         const B_18: u64 = 0x3FFFF;
         const B_27: u64 = 0x7FFFFFF;
         let x_occ0 = self.bitboards[Side::X as usize].occupancy[0];
@@ -347,11 +382,14 @@ impl Position {
         assert_eq!(o_occ0 & (1 << 63), 0);
         assert_eq!(x_occ1 & !B_27, 0);
         assert_eq!(o_occ1 & !B_27, 0);
+
+        return true;
     }
 }
 
+#[allow(dead_code)]
 pub fn perft(depth: u16, pos: &mut Position) -> u64 {
-    pos.assert();
+    assert!(pos.assert());
     if depth == 0 {
         return pos.legal_moves().size() as u64;
     }
@@ -367,10 +405,10 @@ pub fn perft(depth: u16, pos: &mut Position) -> u64 {
     return count;
 }
 
+#[allow(dead_code)]
 fn divide(depth: u16, pos: &mut Position) {
-    pos.assert();
+    assert!(pos.assert());
 
-    let moves = pos.legal_moves();
     // special case; need to do this since perft doesn't output
     // 1 move for base case
     if depth == 0 {
@@ -389,8 +427,9 @@ fn divide(depth: u16, pos: &mut Position) {
     }
 }
 
+#[allow(dead_code)]
 pub fn perft_with_progress(depth: u16, pos: &mut Position) {
-    pos.assert();
+    assert!(pos.assert());
 
     let moves = pos.legal_moves();
     // special case; need to do this since perft doesn't output

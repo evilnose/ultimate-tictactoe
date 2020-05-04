@@ -1,7 +1,7 @@
 extern crate bit_vec;
 
 // mod moves;
-use uttt::moves::{Position, perft, perft_with_progress};
+use uttt::moves::{Position, perft_with_progress};
 
 fn main() {
     // static BOARD: &str =

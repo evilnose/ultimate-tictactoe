@@ -17,8 +17,13 @@ criterion = "0.3"
 bench = false
 
 [[bin]]
-name = "main"
+name = "test-main"
 path = "src/main.rs"
+bench = false
+
+[[bin]]
+name = "interface"
+path = "src/interface.rs"
 bench = false
 
 [[bench]]
