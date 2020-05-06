@@ -1,4 +1,5 @@
 use bitintr::*;
+use std::slice::Iter;
 /*
 Define block to be each 3x3 block of cells.
 Idxing is done block-by-block, row-major from
@@ -46,26 +47,31 @@ static HOPELESS_TABLE: [u64; 8] = [0; 8];
 //     }};
 // }
 
+#[derive(Copy, Clone, Debug)]
+pub enum GameResult {
+    XWon = 0,
+    OWon = 1,
+    Draw = 2,
+    Ongoing = 3,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Side {
     X = 0,
     O = 1,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum GameResult {
-    X_WON = 0,
-    O_WON = 1,
-    DRAW = 2,
-    ONGOING = 3,
-}
-
 impl Side {
-    fn other(&self) -> Side {
+    pub fn other(&self) -> Side {
         match self {
             Self::O => Self::X,
             Self::X => Self::O,
         }
+    }
+
+    pub fn iterator() -> Iter<'static, Side> {
+        static SIDES: [Side; 2] = [Side::X, Side::O];
+        return SIDES.iter();
     }
 }
 
@@ -136,7 +142,7 @@ impl Bitboard {
     }
 
     // returns block index
-    fn set(&mut self, index: Idx) -> u8 {
+    pub(crate) fn set(&mut self, index: Idx) -> u8 {
         assert!(index < BOARD_SIZE);
         assert_eq!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
@@ -153,7 +159,7 @@ impl Bitboard {
     }
 
     // returns large hopeless block occ if a block becomes hopeful again
-    fn unset(&mut self, index: Idx) -> u8 {
+    pub(crate) fn unset(&mut self, index: Idx) -> u8 {
         assert!(index < BOARD_SIZE);
         assert_ne!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
@@ -260,13 +266,13 @@ impl Position {
     #[inline(always)]
     pub fn get_result(&self) -> GameResult {
         if self.is_won(Side::X) {
-            return GameResult::X_WON;
+            return GameResult::XWon;
         } else if self.is_won(Side::O) {
-            return GameResult::O_WON;
+            return GameResult::OWon;
         } else if self.is_drawn() {
-            return GameResult::DRAW;
+            return GameResult::Draw;
         } else {
-            return GameResult::ONGOING;
+            return GameResult::Ongoing;
         }
     }
 
@@ -284,9 +290,9 @@ impl Position {
     // This is test for if the game cannot be won anymore. In contrast
     // to is_drawn which only returns true for boards without any more moves.
     #[inline(always)]
-    pub fn is_dead_drawn(&self) -> bool {
-        panic!("is_dead_drawn() not implemented. You probably want is_draw() for now");
-        block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
+    pub fn is_hopeless(&self) -> bool {
+        panic!("is_hopeless() not implemented. You probably want is_draw() for now");
+        // block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
     }
 
     #[inline(always)]
@@ -327,7 +333,7 @@ impl Position {
         // update to_move
         self.to_move = self.to_move.other();
 
-        // update hopeless occ
+        // update hopeless occ for the other player
         self.hopeless_occ[self.to_move as usize] |= (block_hopeless(block_occ) as B33) << bi;
 
         // update last_block
@@ -353,7 +359,7 @@ impl Position {
     }
 
     #[inline(always)]
-    fn is_block_full(&self, block_i: u8) -> bool {
+    pub(crate) fn is_block_full(&self, block_i: u8) -> bool {
         self.both_block_occ(block_i) == BLOCK_OCC
     }
 

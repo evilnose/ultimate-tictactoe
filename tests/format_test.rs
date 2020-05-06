@@ -15,8 +15,20 @@ fn test_bgn_bothways() {
 
 #[test]
 fn temp_deleteme() {
-    let move_list = "0, 1, 10, 9, 4";
-    let pos = Position::from_move_list(move_list);
+    let board =
+    "OX.|OOX|..O\n\
+     .X.|.X.|.XX\n\
+     .X.|...|OO.\n\
+     -----------\n\
+     ...|OOO|...\n\
+     ...|.X.|O..\n\
+     XX.|...|X.X\n\
+     -----------\n\
+     .XX|..X|...\n\
+     O..|..O|..O\n\
+     O..|.O.|... 7";
+    let pos = Position::from_compact_board(board);
+    pos.assert();
     println!("{}", pos.to_pretty_board());
     println!("{}", pos.to_bgn());
 }

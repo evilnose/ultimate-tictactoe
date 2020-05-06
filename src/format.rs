@@ -16,7 +16,21 @@ macro_rules! to_bb_index {
 }
 
 impl Position {
-    pub fn from_board(repr: &str) -> Position {
+    /* 
+    An example compact board (including newlines)
+     O..|XX.|...
+     ...|.X.|...
+     ...|X.O|...
+     -----------
+     ...|...|...
+     O..|...|...
+     ...|...|...
+     -----------
+     ...|...|...
+     ...|...|...
+     ...|...|... 0;
+    */
+    pub fn from_compact_board(repr: &str) -> Position {
         assert!(repr.len() == 133);
         let mut pos = Position::new();
         let mut n_x = 0;
@@ -58,8 +72,16 @@ impl Position {
                     }
                     _ => panic!("Impossible"),
                 };
+
+                // place piece
                 let own_bb = &mut pos.bitboards[side as usize];
-                // TODO update hopeless_occ
+                let bi = own_bb.set(to_bb_index!(row, col));
+                let block_occ = own_bb.get_block(bi);
+                // update full block
+                pos.full_blocks |= (pos.is_block_full(bi) as B33) << bi;
+
+                // update hopeless occ for the other player
+                pos.hopeless_occ[side.other() as usize] |= (block_hopeless(block_occ) as B33) << bi;
             }
         }
         pos.to_move = match n_x - n_o {

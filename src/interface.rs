@@ -17,7 +17,7 @@ fn next_line(stdin: &mut Stdin) -> String {
         .expect("the line could not be read")
 }
 
-fn command_help(tokens: &mut SplitWhitespace, _: &mut Position) -> bool {
+fn command_help(_: &mut SplitWhitespace, _: &mut Position) -> bool {
     static HELP_TEXT: &'static str = "
 COMMANDS
 ========
@@ -121,29 +121,25 @@ fn command_evaluate(_: &mut SplitWhitespace, _: &mut Position) -> bool {
 }
 
 fn main() {
-    let mut pos = Position::new();
-    // let move_list = "0, 1, 9, 4, 36, 7, 70, 71, 79, 67, 43, 63, 20, 21,\
-    // 31, 40, 37, 13, 38, 23, 49, 22, 10, 14, 52, 55, 11,\
-    // 50, 46, 30, 29, 27, 32, 33, 58, 78, 59, 72, 57";
-    // let mut pos = Position::from_move_list(move_list);
+    let mut pos = Position::from_bgn("2 92/14/30/c0/10/140/6/4/0 1/3/c4/0/7/8/48/a0/20 7");
     let mut player_move = pos.side_to_move() == Side::X;
     let mut stdin = io::stdin();
     loop {
         let result = pos.get_result();
         match result {
-            GameResult::X_WON => {
+            GameResult::XWon => {
                 println!("X wins!");
                 return;
             }
-            GameResult::O_WON => {
+            GameResult::OWon => {
                 println!("O wins!");
                 return;
             }
-            GameResult::DRAW => {
+            GameResult::Draw => {
                 println!("It's a draw!");
                 return;
             }
-            GameResult::ONGOING => {}
+            GameResult::Ongoing => {}
         }
 
         if player_move {
@@ -172,6 +168,7 @@ fn main() {
             player_move = false;
         } else {
             let idx;
+            println!("Thinking...");
             unsafe {
                 let tup = best_move(DEPTH, &mut pos);
                 idx = tup.0;
