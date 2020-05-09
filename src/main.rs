@@ -38,6 +38,7 @@ fn main() {
             pos.make_move(mov as Idx);
         }
         let best = best_move(depth as u16, &mut pos);
+        pos.make_move(best.0);
         println!("{}", best.0);
     }
 }
