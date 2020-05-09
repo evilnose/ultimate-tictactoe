@@ -2,7 +2,7 @@ use crate::moves::*;
 use crate::engine::*;
 
 pub fn basic_eval(pos: &Position) -> Score {
-    let side2move: Score = -1 + 2 * (pos.to_move == Side::X) as Score;
+    let side2move = side_multiplier(pos.to_move);
     match pos.get_result() {
         GameResult::XWon => 100 * side2move,
         GameResult::OWon => -100 * side2move,
@@ -17,7 +17,7 @@ pub fn basic_eval(pos: &Position) -> Score {
 // return very large, very negative, or zero if game is over.
 // otherwise return -1. This encapsulates side2move.
 pub fn end_check(pos: &Position) -> Score {
-    let side2move: Score = -1 + 2 * (pos.to_move == Side::X) as Score;
+    let side2move = side_multiplier(pos.to_move);
     match pos.get_result() {
         GameResult::XWon => 100 * side2move,
         GameResult::OWon => -100 * side2move,
@@ -26,6 +26,11 @@ pub fn end_check(pos: &Position) -> Score {
             -1
         }
     }
+}
+
+#[inline(always)]
+pub fn side_multiplier(side: Side) -> Score {
+    -1 + 2 * (side == Side::X) as Score
 }
 
 #[cfg(test)]

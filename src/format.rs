@@ -174,10 +174,19 @@ impl Position {
     }
 
     pub fn to_bgn(&self) -> String {
-        // TODO
-        let x_board = self.to_bgn_str(Side::X);
-        let o_board = self.to_bgn_str(Side::O);
+        let x_board = self.to_side_bgn(Side::X);
+        let o_board = self.to_side_bgn(Side::O);
         return format!("2 {} {} {}", x_board, o_board, self.last_block);
+    }
+
+    fn to_side_bgn(&self, side: Side) -> String {
+        let bitboard = self.bitboards[side as usize];
+        let mut str_list = Vec::new();
+        for bi in 0..9 {
+            let occ = bitboard.get_block(bi);
+            str_list.push(format!("{:x}", occ));
+        }
+        return str_list.join("/");
     }
     
     // initialize bitboard of side using repr, a string of blocks
@@ -201,16 +210,6 @@ impl Position {
         }
         
         return count;
-    }
-
-    fn to_bgn_str(&self, side: Side) -> String {
-        let bitboard = self.bitboards[side as usize];
-        let mut str_list = Vec::new();
-        for bi in 0..9 {
-            let occ = bitboard.get_block(bi);
-            str_list.push(format!("{:x}", occ));
-        }
-        return str_list.join("/");
     }
 
     // comma separated list of moves
