@@ -78,13 +78,13 @@ impl Side {
 pub(crate) static BLOCK_OCC: B33 = 0b111111111;
 
 pub(crate) fn block_won(occ: B33) -> bool {
-    assert_eq!(occ & !BLOCK_OCC, 0);
+    debug_assert_eq!(occ & !BLOCK_OCC, 0);
     WIN_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
 
 // returns true if winning is hopeless for THE OTHER SIDE
 pub(crate) fn block_hopeless(occ: B33) -> bool {
-    assert_eq!(occ & !BLOCK_OCC, 0);
+    debug_assert_eq!(occ & !BLOCK_OCC, 0);
     HOPELESS_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
 
@@ -143,8 +143,8 @@ impl Bitboard {
 
     // returns block index
     pub(crate) fn set(&mut self, index: Idx) -> u8 {
-        assert!(index < BOARD_SIZE);
-        assert_eq!(
+        debug_assert!(index < BOARD_SIZE);
+        debug_assert_eq!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
             0
         );
@@ -160,7 +160,7 @@ impl Bitboard {
 
     // returns large hopeless block occ if a block becomes hopeful again
     pub(crate) fn unset(&mut self, index: Idx) -> u8 {
-        assert!(index < BOARD_SIZE);
+        debug_assert!(index < BOARD_SIZE);
         assert_ne!(
             self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
             0
@@ -177,7 +177,7 @@ impl Bitboard {
 
     // NOTE block must be empty before this
     pub fn set_block(&mut self, block_i: u8, occ: B33) {
-        assert_eq!(occ & !BLOCK_OCC, 0);
+        debug_assert_eq!(occ & !BLOCK_OCC, 0);
         // set
         self.occupancy[block_i as usize / 7] |= (occ as u64) << ((block_i % 7) * 9);
         // set
@@ -377,17 +377,17 @@ impl Position {
         let o_big_occ = o_occ1 >> 18;
 
         // occupancies don't overlap
-        assert_eq!(x_occ0 & o_occ0, 0);
-        assert_eq!((x_occ1 & o_occ1) & B_18, 0);
+        debug_assert_eq!(x_occ0 & o_occ0, 0);
+        debug_assert_eq!((x_occ1 & o_occ1) & B_18, 0);
 
         // big occupancies don't overlap
-        assert_eq!(x_big_occ & o_big_occ, 0);
+        debug_assert_eq!(x_big_occ & o_big_occ, 0);
 
         // bit representations are within range
-        assert_eq!(x_occ0 & (1 << 63), 0);
-        assert_eq!(o_occ0 & (1 << 63), 0);
-        assert_eq!(x_occ1 & !B_27, 0);
-        assert_eq!(o_occ1 & !B_27, 0);
+        debug_assert_eq!(x_occ0 & (1 << 63), 0);
+        debug_assert_eq!(o_occ0 & (1 << 63), 0);
+        debug_assert_eq!(x_occ1 & !B_27, 0);
+        debug_assert_eq!(o_occ1 & !B_27, 0);
 
         return true;
     }
@@ -395,7 +395,7 @@ impl Position {
 
 #[allow(dead_code)]
 pub fn perft(depth: u16, pos: &mut Position) -> u64 {
-    assert!(pos.assert());
+    debug_assert!(pos.assert());
     if depth == 0 {
         return pos.legal_moves().size() as u64;
     }
@@ -413,7 +413,7 @@ pub fn perft(depth: u16, pos: &mut Position) -> u64 {
 
 #[allow(dead_code)]
 fn divide(depth: u16, pos: &mut Position) {
-    assert!(pos.assert());
+    debug_assert!(pos.assert());
 
     // special case; need to do this since perft doesn't output
     // 1 move for base case
@@ -435,7 +435,7 @@ fn divide(depth: u16, pos: &mut Position) {
 
 #[allow(dead_code)]
 pub fn perft_with_progress(depth: u16, pos: &mut Position) {
-    assert!(pos.assert());
+    debug_assert!(pos.assert());
 
     let moves = pos.legal_moves();
     // special case; need to do this since perft doesn't output

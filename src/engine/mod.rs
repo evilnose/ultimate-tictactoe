@@ -12,14 +12,16 @@ const SCORE_POS_INF: i32 = 10000;
 
 // no time limit; single thread
 pub fn best_move(depth: u16, pos: &mut Position) -> (Idx, Score) {
+    // TODO maybe debug_assert? probably doesn't matter
     assert!(depth >= 1);
+    assert!(!pos.is_over());
     let mut best_score = SCORE_NEG_INF;
     let mut best_move = NULL_IDX;
 
     for mov in pos.legal_moves() {
         let mut temp = pos.clone();
         temp.make_move(mov);
-        let score = -brute_force_search(depth, &mut temp);
+        let score = -alpha_beta_search(depth, &mut temp);
         if score > best_score {
             best_score = score;
             best_move = mov;

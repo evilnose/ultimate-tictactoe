@@ -17,8 +17,13 @@ criterion = "0.3"
 bench = false
 
 [[bin]]
-name = "test-main"
+name = "main"
 path = "src/main.rs"
+bench = false
+
+[[bin]]
+name = "temp"
+path = "src/temp.rs"
 bench = false
 
 [[bin]]
@@ -27,5 +32,5 @@ path = "src/interface.rs"
 bench = false
 
 [[bench]]
-name = "perft_benchmark"
+name = "search_benchmark"
 harness = false
