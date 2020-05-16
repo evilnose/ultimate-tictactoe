@@ -76,39 +76,48 @@ impl Side {
 }
 
 pub(crate) static BLOCK_OCC: B33 = 0b111111111;
+pub(crate) static BLOCK_OCC_I128: i128 = BLOCK_OCC as i128;
+pub(crate) static BOARD_OCC: u128 = 0x1ffffffffffffffffffffu128;
 
-pub(crate) fn block_won(occ: B33) -> bool {
+pub(crate) fn compute_block_won(occ: B33) -> bool {
     debug_assert_eq!(occ & !BLOCK_OCC, 0);
     WIN_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
 
 // returns true if winning is hopeless for THE OTHER SIDE
-pub(crate) fn block_hopeless(occ: B33) -> bool {
+pub(crate) fn compute_block_hopeless(occ: B33) -> bool {
     debug_assert_eq!(occ & !BLOCK_OCC, 0);
     HOPELESS_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
 }
 
-#[derive(Copy, Clone)]
-pub struct Moves {
-    occupancy: [u64; 2],
+// returns filled block occ if filled is true; 0 otherwise
+#[inline(always)]
+fn bool_to_block(filled: bool) -> u128 {
+    ((0i128 - (filled as i128)) & BLOCK_OCC_I128) as u128
 }
 
+// tzcnt() is not implemented for u128. I emulate it here
+trait MyTzcnt {
+    fn tzcnt(&self) -> Self;
+}
+
+impl MyTzcnt for u128 {
+    fn tzcnt(&self) -> Self {
+        let cnt1 = (0i64 - ((*self as u64) == 0u64) as i64) & ((*self >> 64) as u64).tzcnt() as i64;
+        return cnt1 as u128 + (*self as u64).tzcnt() as u128;
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Moves(u128);
+
 impl Moves {
-    fn new() -> Moves {
-        Moves { occupancy: [0; 2] }
-    }
-
-    fn add(&mut self, index: Idx) {
-        debug_assert!(index < BOARD_SIZE);
-        self.occupancy[index as usize / 63] |= 1u64 << (index % 63);
-    }
-
-    pub fn size(&self) -> u32 {
-        self.occupancy[0].count_ones() + self.occupancy[1].count_ones()
+    pub fn size(&self) -> usize {
+        self.0.count_ones() as usize
     }
 
     pub fn contains(&self, index: Idx) -> bool {
-        self.occupancy[index as usize / 63] & (1u64 << (index % 63)) != 0
+        self.0 & (1u128 << index) != 0
     }
 }
 
@@ -116,117 +125,84 @@ impl Iterator for Moves {
     type Item = Idx;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let idx = (self.occupancy[0] == 0) as usize;
-        let occ = self.occupancy[idx];
-
-        if occ == 0 {
-            return None;
-        } else {
-            let i = occ.tzcnt() as Idx;
-            self.occupancy[idx] &= !(1 << i);
-            return Some(idx as Idx * 63 + i);
+        match self.0 {
+            0 => None,
+            n => {
+                let i = n.tzcnt();
+                self.0 &= !(1 << i);
+                Some(i as Idx)
+            }
         }
     }
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct Bitboard {
-    // occupancy[0]: first 63 bits: first 7 blocks;
-    // occupancy[1]: first 18 bits: last 2 blocks;
-    //               next 9 bits: block occ
-    occupancy: [u64; 2],
-}
+pub(crate) struct Bitboard(u128);
 
 impl Bitboard {
     fn new() -> Bitboard {
-        Bitboard { occupancy: [0; 2] }
+        Bitboard(0)
     }
 
     // returns block index
     pub(crate) fn set(&mut self, index: Idx) -> u8 {
         debug_assert!(index < BOARD_SIZE);
-        debug_assert_eq!(
-            self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
-            0
-        );
-        self.occupancy[index as usize / 63] |= 1u64 << (index % 63);
+        debug_assert_eq!(self.0 & (1u128 << index), 0);
+        self.0 |= 1u128 << index;
 
         // update block occupancy if won this block
         let block_i = index as u8 / 9;
         let block = self.get_block(block_i);
-        self.occupancy[1] |= (block_won(block) as u64) << (18 + block_i);
+        let won = compute_block_won(block);
+        self.0 |= (won as u128) << (BOARD_SIZE + block_i);
 
-        return block_i;
-    }
+        // completely fill captured block since it doesn't make
+        // a difference now anyways. This also allows for easier
+        // movegen & possibly later transposition
+        self.0 |= bool_to_block(won) << block_i * 9;
 
-    // returns large hopeless block occ if a block becomes hopeful again
-    pub(crate) fn unset(&mut self, index: Idx) -> u8 {
-        debug_assert!(index < BOARD_SIZE);
-        assert_ne!(
-            self.occupancy[index as usize / 63] & (1u64 << (index % 63)),
-            0
-        );
-        self.occupancy[index as usize / 63] &= !(1u64 << (index % 63));
-
-        // update block occupancy if un-won this block
-        let block_i = index as u8 / 9;
-        let block = self.get_block(block_i);
-        self.occupancy[1] &= !((block_won(block) as u64) << (18 + block_i));
-        // return (block_hopeless(block) as B33) << block_i;
         return block_i;
     }
 
     // NOTE block must be empty before this
     pub fn set_block(&mut self, block_i: u8, occ: B33) {
+        debug_assert!(block_i < 9);
         debug_assert_eq!(occ & !BLOCK_OCC, 0);
-        // set
-        self.occupancy[block_i as usize / 7] |= (occ as u64) << ((block_i % 7) * 9);
-        // set
-        self.occupancy[1] |= (block_won(occ) as u64) << (18 + block_i);
+        self.0 |= (occ as u128) << (block_i * 9);
+        let won = compute_block_won(occ);
+        self.0 |= (won as u128) << (BOARD_SIZE + block_i);
+        self.0 |= bool_to_block(won) << block_i * 9;
     }
 
     // return aligned occupancy for one block
     pub fn get_block(&self, block_i: u8) -> B33 {
-        ((self.occupancy[block_i as usize / 7] >> ((block_i % 7) * 9)) as B33) & BLOCK_OCC
+        debug_assert!(block_i < 9);
+        ((self.0 >> (block_i * 9)) as B33) & BLOCK_OCC
     }
 
     pub fn get(&self, index: Idx) -> bool {
-        if index >= BOARD_SIZE {
-            panic!("Bitboard::get() out of bounds")
-        }
-        (self.occupancy[index as usize / 63] & ((1 as u64) << (index % 63))) != 0
+        debug_assert!(index < BOARD_SIZE);
+        self.0 & ((1 as u128) << index) != 0
     }
 
     #[inline]
     pub fn captured_occ(&self) -> B33 {
-        ((self.occupancy[1] >> 18) as B33) & BLOCK_OCC
+        ((self.0 >> BOARD_SIZE) as B33) & BLOCK_OCC
     }
 
     #[inline]
     pub fn has_captured(&self, block_i: u8) -> bool {
         debug_assert!(block_i < 9);
-        ((self.occupancy[1] >> 18) as B33) & (1 << block_i) != 0
+        self.0 & (1 << (block_i + BOARD_SIZE)) != 0
     }
-
-    // // returns precomputed result: if 3x3 block is captured/drawn
-    // pub fn block_marked(&self, block_i: u8) -> bool {
-    //     (self.occupancy[1] | (1 << (18 + block_i))) != 0
-    // }
 }
 
-/*
-Need 81 * 2 bits for each player's general board
-4 bits for the last large square played
-1 bit for the side to move
-
-167 bits in total. 3 longs.
-*/
 #[derive(Copy, Clone)]
 pub struct Position {
     pub(crate) bitboards: [Bitboard; 2],
     pub(crate) to_move: Side,
-    pub(crate) full_blocks: B33, // occupancy of blocks that are full
-    pub(crate) hopeless_occ: [B33; 2], // occupancy of blocks that cannot be won
+    // occupancy of blocks that cannot be won
+    pub(crate) hopeless_occ: [B33; 2], 
     pub(crate) last_block: u8,
 }
 
@@ -237,38 +213,24 @@ impl Position {
         Position {
             bitboards: [Bitboard::new(), Bitboard::new()],
             to_move: Side::X,
-            full_blocks: 0,
             hopeless_occ: [0; 2],
             last_block: ANY_BLOCK,
         }
     }
 
-    pub fn legal_moves(&self) -> Moves {
-        if self.is_over() {
-            return Moves::new();
-        }
-        // TODO check for inline performance
-        return self.legal_moves_nocheck();
-    }
-
     // does NOT check for termination, i.e. if the game is won/drawn
-    pub fn legal_moves_nocheck(&self) -> Moves {
-        let mut moves = Moves::new();
-        let dead_blocks =
-            self.bitboards[0].captured_occ() | self.bitboards[1].captured_occ() | self.full_blocks;
-        if self.last_block == ANY_BLOCK || dead_blocks & (1 << self.last_block) != 0 {
-            // can go anywhere that is not captured
-            let mut blocks: B33 = !dead_blocks & BLOCK_OCC;
-            while blocks != 0 {
-                let block_i = blocks.tzcnt();
-                self.add_block_moves(block_i as u8, &mut moves);
-                blocks &= !(1 << block_i);
-            }
-        } else {
-            self.add_block_moves(self.last_block, &mut moves);
-        }
-
-        return moves;
+    pub fn legal_moves(&self) -> Moves {
+        debug_assert!(!self.is_over());
+        let total_occ = self.bitboards[0].0 | self.bitboards[1].0;
+        // check if I can go anywhere on the board
+        let full_board = self.last_block == ANY_BLOCK
+            || (((total_occ >> (self.last_block * 9)) as B33) & BLOCK_OCC
+                == BLOCK_OCC);
+        
+        // no-branch map full_board true => all one's, or full_board false => local one's
+        let local_occ = ((BLOCK_OCC as u128) << (self.last_block * 9)) as u128;
+        let mask = (0i128 - full_board as i128) as u128 | local_occ;
+        Moves(mask & !total_occ & BOARD_OCC)
     }
 
     #[inline(always)]
@@ -291,7 +253,7 @@ impl Position {
 
     #[inline(always)]
     pub fn is_won(&self, side: Side) -> bool {
-        block_won(self.bitboards[side as usize].captured_occ())
+        compute_block_won(self.bitboards[side as usize].captured_occ())
     }
 
     // TODO use this for eval
@@ -303,30 +265,16 @@ impl Position {
         // block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
     }
 
+    // NOTE does not check for win/loss. So only call this after is_won is called
+    // for both sides
     #[inline(always)]
     pub fn is_drawn(&self) -> bool {
-        self.full_blocks | self.bitboards[0].captured_occ() | self.bitboards[1].captured_occ()
-            == BLOCK_OCC
+        (self.bitboards[0].0 | self.bitboards[1].0) & BOARD_OCC == BOARD_OCC
     }
 
     #[inline(always)]
     pub fn is_over(&self) -> bool {
         self.is_won(Side::X) || self.is_won(Side::O) || self.is_drawn()
-    }
-
-    fn add_block_moves(&self, block_i: u8, moves: &mut Moves) {
-        let mut block_occ = !self.both_block_occ(block_i) & BLOCK_OCC;
-        let offset = block_i as Idx * 9;
-        while block_occ != 0 {
-            let idx = block_occ.tzcnt() as Idx;
-            moves.add(idx + offset);
-            block_occ &= !(1 << idx);
-        }
-    }
-
-    #[inline(always)]
-    fn both_block_occ(&self, block_i: u8) -> B33 {
-        self.bitboards[0].get_block(block_i) | self.bitboards[1].get_block(block_i)
     }
 
     pub fn make_move(&mut self, index: Idx) {
@@ -335,67 +283,25 @@ impl Position {
         let bi = own_bb.set(index);
         let block_occ = own_bb.get_block(bi);
 
-        // update full block
-        self.full_blocks |= (self.is_block_full(bi) as B33) << bi;
-
         // update to_move
         self.to_move = self.to_move.other();
 
         // update hopeless occ for the other player
-        self.hopeless_occ[self.to_move as usize] |= (block_hopeless(block_occ) as B33) << bi;
+        self.hopeless_occ[self.to_move as usize] |=
+            (compute_block_hopeless(block_occ) as B33) << bi;
 
         // update last_block
         self.last_block = to_local_index!(index);
-    }
-
-    pub fn unmake_move(&mut self, index: Idx, last_block: u8) {
-        self.to_move = self.to_move.other();
-
-        let own_bb = &mut self.bitboards[self.to_move as usize];
-        let bi = own_bb.unset(index);
-        let block_occ = own_bb.get_block(bi);
-
-        // update full block
-        self.full_blocks &= !(1 << bi);
-
-        // update hopeless occ
-        self.hopeless_occ[self.to_move.other() as usize] &=
-            !((!block_hopeless(block_occ) as B33) << bi);
-
-        // update last_block
-        self.last_block = last_block;
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_block_full(&self, block_i: u8) -> bool {
-        self.both_block_occ(block_i) == BLOCK_OCC
     }
 
     #[allow(dead_code)]
     // returns bool so that we can put this in an assert! macro and
     // not have this code run in production
     pub fn assert(&self) -> bool {
-        const B_18: u64 = 0x3FFFF;
-        const B_27: u64 = 0x7FFFFFF;
-        let x_occ0 = self.bitboards[Side::X as usize].occupancy[0];
-        let x_occ1 = self.bitboards[Side::X as usize].occupancy[1];
-        let x_big_occ = x_occ1 >> 18;
-        let o_occ0 = self.bitboards[Side::O as usize].occupancy[0];
-        let o_occ1 = self.bitboards[Side::O as usize].occupancy[1];
-        let o_big_occ = o_occ1 >> 18;
-
-        // occupancies don't overlap
-        debug_assert_eq!(x_occ0 & o_occ0, 0);
-        debug_assert_eq!((x_occ1 & o_occ1) & B_18, 0);
-
-        // big occupancies don't overlap
-        debug_assert_eq!(x_big_occ & o_big_occ, 0);
 
         // bit representations are within range
-        debug_assert_eq!(x_occ0 & (1 << 63), 0);
-        debug_assert_eq!(o_occ0 & (1 << 63), 0);
-        debug_assert_eq!(x_occ1 & !B_27, 0);
-        debug_assert_eq!(o_occ1 & !B_27, 0);
+        debug_assert_eq!(self.bitboards[0].0 >> (BOARD_SIZE + 9), 0);
+        debug_assert_eq!(self.bitboards[1].0 >> (BOARD_SIZE + 9), 0);
 
         return true;
     }
@@ -404,6 +310,9 @@ impl Position {
 #[allow(dead_code)]
 pub fn perft(depth: u16, pos: &mut Position) -> u64 {
     debug_assert!(pos.assert());
+    if pos.is_won(pos.to_move.other()) || pos.is_drawn() {
+        return 0;
+    }
     if depth == 0 {
         return pos.legal_moves().size() as u64;
     }
@@ -411,10 +320,8 @@ pub fn perft(depth: u16, pos: &mut Position) -> u64 {
 
     for mov in pos.legal_moves() {
         let mut temp = pos.clone();
-        // let last_block = pos.last_block;
         temp.make_move(mov);
         count += perft(depth - 1, &mut temp);
-        // pos.unmake_move(mov, last_block);
     }
     return count;
 }

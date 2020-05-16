@@ -77,11 +77,9 @@ impl Position {
                 let own_bb = &mut pos.bitboards[side as usize];
                 let bi = own_bb.set(to_bb_index!(row, col));
                 let block_occ = own_bb.get_block(bi);
-                // update full block
-                pos.full_blocks |= (pos.is_block_full(bi) as B33) << bi;
 
                 // update hopeless occ for the other player
-                pos.hopeless_occ[side.other() as usize] |= (block_hopeless(block_occ) as B33) << bi;
+                pos.hopeless_occ[side.other() as usize] |= (compute_block_hopeless(block_occ) as B33) << bi;
             }
         }
         pos.to_move = match n_x - n_o {
@@ -159,6 +157,9 @@ impl Position {
         let focus_block = tokens.next().expect("too few tokens: need focus block");
         assert_eq!(focus_block.len(), 1);
 
+        let to_move = tokens.next().expect("too few tokens: need side to move");
+        assert_eq!(to_move.len(), 1);
+
         let x_count = pos.init_bgn_bb(Side::X, x_board);
         let o_count = pos.init_bgn_bb(Side::O, o_board);
         if x_count == o_count {
@@ -170,13 +171,19 @@ impl Position {
         }
 
         pos.last_block = focus_block.parse().unwrap();
+        pos.to_move = match to_move {
+            "X" => Side::X,
+            "O" => Side::O,
+            other => panic!("to_move must be 'X' or 'O', but got '{}' instead", other),
+        };
         return pos;
     }
 
     pub fn to_bgn(&self) -> String {
         let x_board = self.to_side_bgn(Side::X);
         let o_board = self.to_side_bgn(Side::O);
-        return format!("2 {} {} {}", x_board, o_board, self.last_block);
+        let to_move = match self.to_move { Side::X => "X", Side::O => "O" };
+        return format!("2 {} {} {} {}", x_board, o_board, self.last_block, to_move);
     }
 
     fn to_side_bgn(&self, side: Side) -> String {
@@ -201,12 +208,8 @@ impl Position {
             let occ = i64::from_str_radix(tok.trim(), 16).expect("could not parse hex string") as B33;
             count += occ.count_ones();
             bitboard.set_block(bi, occ);
-            // update full block
-            if occ == BLOCK_OCC {
-                self.full_blocks |= 1 << bi;
-            }
             // update hopeless occ
-            self.hopeless_occ[self.to_move as usize] |= (block_hopeless(occ) as B33) << bi;
+            self.hopeless_occ[self.to_move as usize] |= (compute_block_hopeless(occ) as B33) << bi;
         }
         
         return count;

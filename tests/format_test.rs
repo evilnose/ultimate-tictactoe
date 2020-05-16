@@ -12,23 +12,3 @@ fn test_bgn_bothways() {
     println!("{}", pos.to_bgn());
     assert_eq!(pos.to_pretty_board(), pos1.to_pretty_board());
 }
-
-#[test]
-fn temp_deleteme() {
-    let board =
-    "OX.|OOX|..O\n\
-     .X.|.X.|.XX\n\
-     .X.|...|OO.\n\
-     -----------\n\
-     ...|OOO|...\n\
-     ...|.X.|O..\n\
-     XX.|...|X.X\n\
-     -----------\n\
-     .XX|..X|...\n\
-     O..|..O|..O\n\
-     O..|.O.|... 7";
-    let pos = Position::from_compact_board(board);
-    pos.assert();
-    println!("{}", pos.to_pretty_board());
-    println!("{}", pos.to_bgn());
-}
