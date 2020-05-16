@@ -11,7 +11,7 @@ macro_rules! to_bb_index {
         let bi = ((row / 3) * 3 + (col / 3));
         let small_row = row % 3;
         let small_col = col % 3;
-        (bi * 9 + (small_row * 3 + small_col)) as u16
+        (bi * 9 + (small_row * 3 + small_col)) as Idx
     }};
 }
 

@@ -2,12 +2,12 @@ use std::io::{self, BufRead, Stdin};
 use std::process::exit;
 use std::str::SplitWhitespace;
 
-use uttt::engine::best_move;
+use uttt::engine::*;
 use uttt::moves::*;
 
 struct GameContext {
     depth: u16,
-    eval: i32,
+    eval: Score,
     history: Vec<String>,
 }
 
@@ -15,7 +15,7 @@ impl GameContext {
     fn new() -> GameContext {
         GameContext {
             depth: 7,
-            eval: 1234567, // indicates not updated
+            eval: 1234567.8, // indicates not updated
             history: Vec::new(),
         }
     }

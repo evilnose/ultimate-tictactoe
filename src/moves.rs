@@ -13,9 +13,9 @@ the top-left block:
 ...      |   ...    | ...
 */
 pub(crate) type B33 = u16;
-pub type Idx = u16;
+pub type Idx = u8;
 const BOARD_SIZE: Idx = 81;
-pub const NULL_IDX: Idx = 81;
+pub const NULL_IDX: Idx = 88;
 
 macro_rules! to_local_index {
     ($index:expr) => {{
@@ -99,6 +99,7 @@ impl Moves {
     }
 
     fn add(&mut self, index: Idx) {
+        debug_assert!(index < BOARD_SIZE);
         self.occupancy[index as usize / 63] |= 1u64 << (index % 63);
     }
 
@@ -196,8 +197,15 @@ impl Bitboard {
         (self.occupancy[index as usize / 63] & ((1 as u64) << (index % 63))) != 0
     }
 
+    #[inline]
     pub fn captured_occ(&self) -> B33 {
         ((self.occupancy[1] >> 18) as B33) & BLOCK_OCC
+    }
+
+    #[inline]
+    pub fn has_captured(&self, block_i: u8) -> bool {
+        debug_assert!(block_i < 9);
+        ((self.occupancy[1] >> 18) as B33) & (1 << block_i) != 0
     }
 
     // // returns precomputed result: if 3x3 block is captured/drawn
@@ -310,7 +318,7 @@ impl Position {
         let mut block_occ = !self.both_block_occ(block_i) & BLOCK_OCC;
         let offset = block_i as Idx * 9;
         while block_occ != 0 {
-            let idx = block_occ.tzcnt();
+            let idx = block_occ.tzcnt() as Idx;
             moves.add(idx + offset);
             block_occ &= !(1 << idx);
         }

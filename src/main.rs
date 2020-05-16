@@ -1,4 +1,4 @@
-use uttt::engine::best_move;
+use uttt::engine::*;
 use uttt::moves::*;
 use std::io::{self, BufRead, Stdin};
 use std::env;
