@@ -1,4 +1,5 @@
 use uttt::moves::*;
+use std::time::{Duration, Instant};
 
 #[test]
 fn startpos() {

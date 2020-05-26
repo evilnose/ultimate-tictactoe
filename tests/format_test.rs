@@ -1,5 +1,4 @@
 use uttt::moves::*;
-use uttt::format::*;
 
 #[test]
 fn test_bgn_bothways() {

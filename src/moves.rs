@@ -159,9 +159,14 @@ impl Bitboard {
         // completely fill captured block since it doesn't make
         // a difference now anyways. This also allows for easier
         // movegen & possibly later transposition
-        self.0 |= bool_to_block(won) << block_i * 9;
+        self.0 |= bool_to_block(won) << (block_i * 9);
 
         return block_i;
+    }
+
+    pub fn get(&self, index: Idx) -> bool {
+        debug_assert!(index < BOARD_SIZE);
+        self.0 & ((1 as u128) << index) != 0
     }
 
     // NOTE block must be empty before this
@@ -178,11 +183,6 @@ impl Bitboard {
     pub fn get_block(&self, block_i: u8) -> B33 {
         debug_assert!(block_i < 9);
         ((self.0 >> (block_i * 9)) as B33) & BLOCK_OCC
-    }
-
-    pub fn get(&self, index: Idx) -> bool {
-        debug_assert!(index < BOARD_SIZE);
-        self.0 & ((1 as u128) << index) != 0
     }
 
     #[inline]

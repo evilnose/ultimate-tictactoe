@@ -5,5 +5,4 @@
 
 ## TODOs
 
-* Replace Moves and Bitboard by u128 type
-* Don't use Idx when possible to speed up movegen (e.g. use more masking)
+* Generate magic number to find mapping of 3x3 black & white board (3^9) to 16-bit number
