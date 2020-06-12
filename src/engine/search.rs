@@ -14,7 +14,7 @@ fn alpha_beta(depth: u16, pos: &mut Position, alpha: Score, beta: Score, eval_fn
     // note only the last moved side could have won so only
     // one call to is_won() is made
     if pos.is_won(pos.to_move.other()) {
-        return -1000.0;
+        return -std::f32::INFINITY;
     } else if pos.is_drawn() {
         return 0.0;
     } else if depth == 0 {

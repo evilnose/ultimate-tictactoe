@@ -1,5 +1,6 @@
 use bitintr::*;
 use std::slice::Iter;
+
 /*
 Define block to be each 3x3 block of cells.
 Idxing is done block-by-block, row-major from
@@ -23,19 +24,88 @@ macro_rules! to_local_index {
     }};
 }
 
-static WIN_TABLE: [u64; 8] = [
-    0xff80808080808080,
-    0xfff0aa80faf0aa80,
-    0xffcc8080cccc8080,
-    0xfffcaa80fefcaa80,
-    0xfffaf0f0aaaa8080,
-    0xfffafaf0fafaaa80,
-    0xfffef0f0eeee8080,
-    0xffffffffffffffff,
+#[derive(Copy, Clone)]
+pub struct BlockState(u8);
+
+impl BlockState {
+    // min_needed is minimum number of blocks needed for "me" to capture
+    // this block. 0..3 is self-explanatory, but 4 is special: it means
+    // that it is impossible for me to win this block.
+    // n_routes contains the number of WIN_OCCs (i.e. rows, cols, diags)
+    // that need min_needed more blocks to be won. Clearly n_routes
+    // is at least 1
+    pub(crate) fn new(min_needed: u8, n_routes: u8) -> BlockState {
+        debug_assert!(min_needed == 4 || n_routes >= 1);
+        debug_assert!(min_needed <= 4);
+        // need three bits for min_needed
+        BlockState(min_needed | n_routes << 3)
+    }
+
+    pub(crate) fn min_needed(&self) -> u8 {
+        self.0 & 7
+    }
+
+    pub(crate) fn n_routes(&self) -> u8 {
+        self.0 >> 3
+    }
+}
+
+// enumeration of the rows, diagonals & cols
+static WIN_OCC_LIST: [B33; 8] = [
+    0b111,
+    0b111000,
+    0b111000000,
+    0b001001001,
+    0b010010010,
+    0b100100100,
+    0b001010100,
+    0b100010001,
 ];
 
-// TODO
-static HOPELESS_TABLE: [u64; 8] = [0; 8];
+// 2 ^ 18
+pub(crate) const N_BLOCK33: usize = 262144;
+static mut BLOCK_STATE_TABLE: [BlockState; N_BLOCK33] = [BlockState(0); N_BLOCK33];
+static mut INITIALIZED: bool = false;  // for sanity checks
+
+pub fn init_moves() {
+    for idx in 0..N_BLOCK33 {
+        // by convention, my_occ is the lower 9 bits, etc.
+        let my_occ = idx as B33 & BLOCK_OCC;
+        let their_occ = (idx >> 9) as B33 & BLOCK_OCC;
+        //let mut n_min: u8 = 4;
+        let mut counts: [u8; 5] = [0; 5];
+        let mut min_count = 4;
+        for win_occ in WIN_OCC_LIST.iter() {
+            if their_occ & win_occ != 0 {
+                continue;  // no way I can win this
+            }
+            let remaining: u8 = (3 - (win_occ & my_occ).popcnt()) as u8;
+            counts[remaining as usize] += 1;
+            min_count = std::cmp::min(min_count, remaining);
+        }
+        unsafe {
+            BLOCK_STATE_TABLE[idx] = BlockState::new(min_count, counts[min_count as usize]);
+        }
+    }
+    unsafe {
+        INITIALIZED = true;
+    }
+}
+
+#[inline(always)]
+pub fn get_block_state(my_occ: B33, their_occ: B33) -> BlockState {
+    debug_assert!(my_occ | (their_occ << 9) == my_occ + (their_occ << 9));
+    get_block_state_by_idx((my_occ | (their_occ << 9)) as usize)
+}
+
+#[inline(always)]
+pub fn get_block_state_by_idx(idx: usize) -> BlockState {
+    unsafe {
+        //INIT.call_once(init);
+        debug_assert!(INITIALIZED);
+        BLOCK_STATE_TABLE[idx]
+    }
+}
 
 // get occupancy BitVec from square
 // macro_rules! sq_occ {
@@ -79,15 +149,18 @@ pub(crate) static BLOCK_OCC: B33 = 0b111111111;
 pub(crate) static BLOCK_OCC_I128: i128 = BLOCK_OCC as i128;
 pub(crate) static BOARD_OCC: u128 = 0x1ffffffffffffffffffffu128;
 
-pub(crate) fn compute_block_won(occ: B33) -> bool {
+#[inline(always)]
+pub(crate) fn get_block_won(occ: B33) -> bool {
     debug_assert_eq!(occ & !BLOCK_OCC, 0);
-    WIN_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
+    // only need my occ
+    get_block_state(occ, 0).min_needed() == 0
 }
 
 // returns true if winning is hopeless for THE OTHER SIDE
-pub(crate) fn compute_block_hopeless(occ: B33) -> bool {
+pub(crate) fn get_block_hopeless(occ: B33) -> bool {
     debug_assert_eq!(occ & !BLOCK_OCC, 0);
-    HOPELESS_TABLE[occ as usize / 64] & (1 << (occ % 64)) != 0
+    // only need their occ
+    get_block_state(0, occ).min_needed() == 4
 }
 
 // returns filled block occ if filled is true; 0 otherwise
@@ -153,7 +226,7 @@ impl Bitboard {
         // update block occupancy if won this block
         let block_i = index as u8 / 9;
         let block = self.get_block(block_i);
-        let won = compute_block_won(block);
+        let won = get_block_won(block);
         self.0 |= (won as u128) << (BOARD_SIZE + block_i);
 
         // completely fill captured block since it doesn't make
@@ -174,7 +247,7 @@ impl Bitboard {
         debug_assert!(block_i < 9);
         debug_assert_eq!(occ & !BLOCK_OCC, 0);
         self.0 |= (occ as u128) << (block_i * 9);
-        let won = compute_block_won(occ);
+        let won = get_block_won(occ);
         self.0 |= (won as u128) << (BOARD_SIZE + block_i);
         self.0 |= bool_to_block(won) << block_i * 9;
     }
@@ -202,7 +275,7 @@ pub struct Position {
     pub(crate) bitboards: [Bitboard; 2],
     pub(crate) to_move: Side,
     // occupancy of blocks that cannot be won
-    pub(crate) hopeless_occ: [B33; 2], 
+    pub(crate) hopeless_occ: [B33; 2],
     pub(crate) last_block: u8,
 }
 
@@ -224,9 +297,7 @@ impl Position {
         let total_occ = self.bitboards[0].0 | self.bitboards[1].0;
         // check if I can go anywhere on the board
         let full_board = self.last_block == ANY_BLOCK
-            || (((total_occ >> (self.last_block * 9)) as B33) & BLOCK_OCC
-                == BLOCK_OCC);
-        
+            || (((total_occ >> (self.last_block * 9)) as B33) & BLOCK_OCC == BLOCK_OCC);
         // no-branch map full_board true => all one's, or full_board false => local one's
         let local_occ = ((BLOCK_OCC as u128) << (self.last_block * 9)) as u128;
         let mask = (0i128 - full_board as i128) as u128 | local_occ;
@@ -253,7 +324,7 @@ impl Position {
 
     #[inline(always)]
     pub fn is_won(&self, side: Side) -> bool {
-        compute_block_won(self.bitboards[side as usize].captured_occ())
+        get_block_won(self.bitboards[side as usize].captured_occ())
     }
 
     // TODO use this for eval
@@ -261,8 +332,7 @@ impl Position {
     // to is_drawn which only returns true for boards without any more moves.
     #[inline(always)]
     pub fn is_hopeless(&self) -> bool {
-        panic!("is_hopeless() not implemented. You probably want is_draw() for now");
-        // block_hopeless(self.hopeless_occ[0]) && block_hopeless(self.hopeless_occ[1])
+        get_block_hopeless(self.hopeless_occ[0]) && get_block_hopeless(self.hopeless_occ[1])
     }
 
     // NOTE does not check for win/loss. So only call this after is_won is called
@@ -287,8 +357,7 @@ impl Position {
         self.to_move = self.to_move.other();
 
         // update hopeless occ for the other player
-        self.hopeless_occ[self.to_move as usize] |=
-            (compute_block_hopeless(block_occ) as B33) << bi;
+        self.hopeless_occ[self.to_move as usize] |= (get_block_hopeless(block_occ) as B33) << bi;
 
         // update last_block
         self.last_block = to_local_index!(index);
@@ -298,7 +367,6 @@ impl Position {
     // returns bool so that we can put this in an assert! macro and
     // not have this code run in production
     pub fn assert(&self) -> bool {
-
         // bit representations are within range
         debug_assert_eq!(self.bitboards[0].0 >> (BOARD_SIZE + 9), 0);
         debug_assert_eq!(self.bitboards[1].0 >> (BOARD_SIZE + 9), 0);

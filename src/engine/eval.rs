@@ -1,36 +1,17 @@
 use crate::engine::*;
 use crate::moves::*;
-use bitintr::Popcnt;
-use std::sync::Once;
 
 pub type EvalFn = fn(&Position) -> Score;
-
-// enumeration of the rows, diagonals & cols
-static WIN_OCC_LIST: [B33; 8] = [
-    0b111,
-    0b111000,
-    0b111000000,
-    0b001001001,
-    0b010010010,
-    0b100100100,
-    0b001010100,
-    0b100010001,
-];
 
 // 262144 = 2^18
 // note that this is not optimal size (<< 3^9) but it's a hassle
 // to hash it (prob slower) and there is only one such table so
 // it's left as this for now.
-static mut BLOCK_SCORE_TABLE: [Score; 262144] = [0.0; 262144];
-static INIT_BLOCK_SCORE_TABLE: Once = Once::new();
-// this maps the minimum number of cells a player needs to
-// occupy to win a particular block to a score. e.g.
-// if a player needs to occupy at mostone more cell to win
-// this block, the evaluated score is COUNT_TO_SCORE[1].
-// if the player has already won the block, the score is at 0,
-// and if the player has no chance of winning the block, the
-// score is at 4
-//static COUNT_TO_SCORE: [i8; 5] = [8, 4, 2, 1, 0];
+// NOTE: for now this is not used. though if necessary, this 
+// can be part of the initialization, i.e. instead of 
+// blockstate_to_score[occ_to_blockstate[occ]] simply do
+// block_score_table[occ]. takes a bit more memory though.
+//static mut BLOCK_SCORE_TABLE: [Score; 262144] = [0.0; 262144];
 
 // Scores associated with each situation in a block
 static SC_BLOCK_WON: Score = 8.0;
@@ -38,51 +19,32 @@ static SC_NEED_1: Score = 4.0;
 static SC_NEED_2: Score = 0.1;
 static SC_NEED_3: Score = 0.1;
 static SC_HOPELESS: Score = 0.0;  // no chance of winning this block
-/*
-static SC_NEED_2_2: Score = 100;
-static SC_NEED_1_3P: Score = 100.0;
-static SC_NEED_1_2: Score = 100.0;
-*/
+// some arbitrariliy decided sublinear function for 0-9; values capped at 2
+static SUBLINEAR_5: [Score; 10] = [1.0, 1.4, 1.7, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
 
-// return no. of cells to need to occupy to win. 4 if
-// I can't win
-fn eval_block_side(my_occ: B33, their_occ: B33) -> Score {
-    //let mut n_min: u8 = 4;
-    let mut counts: [u8; 4] = [0; 4];
-    for win_occ in WIN_OCC_LIST.iter() {
-        if their_occ & win_occ != 0 {
-            continue; // no way I can win this
+static mut BLOCK_SCORE_TABLE: [f32; N_BLOCK33] = [0.0; N_BLOCK33];
+
+pub fn init_block_score_table() {
+    unsafe {
+        for idx in 0..N_BLOCK33 {
+            let bs = get_block_state_by_idx(idx);
+            BLOCK_SCORE_TABLE[idx] = match bs.min_needed() {
+                0 => SC_BLOCK_WON,
+                1 => SC_NEED_1 * SUBLINEAR_5[bs.n_routes() as usize],
+                2 => SC_NEED_2 * bs.n_routes() as Score,
+                3 => SC_NEED_3,
+                4 => SC_HOPELESS,
+                _ => panic!("min_needed is not in range [0, 4]"),
+            };
         }
-        let remaining: u8 = (3 - (win_occ & my_occ).popcnt()) as u8;
-        //n_min = std::cmp::min(n_min, remaining);
-        counts[remaining as usize] += 1;
-    }
-    if counts[0] != 0 {
-        SC_BLOCK_WON
-    } else if counts[1] != 0 {
-        SC_NEED_1 * (counts[1] as Score).sqrt()
-    } else if counts[2] != 0 {
-        SC_NEED_2 * (counts[2] as Score).sqrt()
-    } else if counts[3] != 0 {
-        SC_NEED_3
-    } else {
-        SC_HOPELESS
     }
 }
 
 // evaluate a 3x3 block, given the occupancy of the two players
 // the more positive (less negative) the better for X
-#[inline]
+#[inline(always)]
 fn eval_block(x_occ: B33, o_occ: B33) -> Score {
-    debug_assert!(x_occ | o_occ << 9 == x_occ + o_occ << 9);
     unsafe {
-        INIT_BLOCK_SCORE_TABLE.call_once(|| {
-            for idx in 0..262144 {
-                let xo = idx as B33 & BLOCK_OCC;
-                let oo = (idx >> 9) as B33 & BLOCK_OCC;
-                BLOCK_SCORE_TABLE[idx] = eval_block_side(xo, oo) - eval_block_side(oo, xo);
-            }
-        });
         BLOCK_SCORE_TABLE[(x_occ | o_occ << 9) as usize]
     }
 }

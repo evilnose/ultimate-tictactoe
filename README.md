@@ -5,4 +5,5 @@
 
 ## TODOs
 
-* Generate magic number to find mapping of 3x3 black & white board (3^9) to 16-bit number
+* Finish dead-drawn implementation
+* quiet search

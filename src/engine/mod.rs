@@ -10,6 +10,10 @@ pub type Score = f32;
 const SCORE_NEG_INF: f32 = -1000000.0;
 const SCORE_POS_INF: f32 = 1000000.0;
 
+pub fn init_engine() {
+    init_block_score_table();
+}
+
 // no time limit; single thread
 pub fn best_move(depth: u16, pos: &mut Position) -> (Idx, Score) {
     assert!(depth >= 1);

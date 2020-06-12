@@ -79,7 +79,7 @@ impl Position {
                 let block_occ = own_bb.get_block(bi);
 
                 // update hopeless occ for the other player
-                pos.hopeless_occ[side.other() as usize] |= (compute_block_hopeless(block_occ) as B33) << bi;
+                pos.hopeless_occ[side.other() as usize] |= (get_block_hopeless(block_occ) as B33) << bi;
             }
         }
         pos.to_move = match n_x - n_o {
@@ -209,7 +209,7 @@ impl Position {
             count += occ.count_ones();
             bitboard.set_block(bi, occ);
             // update hopeless occ
-            self.hopeless_occ[self.to_move as usize] |= (compute_block_hopeless(occ) as B33) << bi;
+            self.hopeless_occ[self.to_move as usize] |= (get_block_hopeless(occ) as B33) << bi;
         }
         
         return count;
