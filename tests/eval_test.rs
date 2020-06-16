@@ -19,6 +19,15 @@ fn stupid_search() {
     );
     println!("{}", pos.to_pretty_board());
     let tup = best_move(5, &mut pos);
-    println!("BLAH {}", tup.0);
-    println!("BLAH {}", tup.1);
+    assert!(tup.1 > 0.0);
+    let tup = best_move(6, &mut pos);
+    assert!(tup.1 > 0.0);
+}
+
+#[test]
+fn temp() {
+    common::setup();
+    // TODo make this private
+    let a = eval::eval_block(0b111111111, 0b000000000);
+    println!("{}", a);
 }

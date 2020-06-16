@@ -77,7 +77,7 @@ pub fn init_moves() {
         let mut min_count = 4;
         for win_occ in WIN_OCC_LIST.iter() {
             if their_occ & win_occ != 0 {
-                continue;  // no way I can win this
+                continue;  // I cannot win this route
             }
             let remaining: u8 = (3 - (win_occ & my_occ).popcnt()) as u8;
             counts[remaining as usize] += 1;
@@ -101,7 +101,6 @@ pub fn get_block_state(my_occ: B33, their_occ: B33) -> BlockState {
 #[inline(always)]
 pub fn get_block_state_by_idx(idx: usize) -> BlockState {
     unsafe {
-        //INIT.call_once(init);
         debug_assert!(INITIALIZED);
         BLOCK_STATE_TABLE[idx]
     }
@@ -258,12 +257,12 @@ impl Bitboard {
         ((self.0 >> (block_i * 9)) as B33) & BLOCK_OCC
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn captured_occ(&self) -> B33 {
         ((self.0 >> BOARD_SIZE) as B33) & BLOCK_OCC
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn has_captured(&self, block_i: u8) -> bool {
         debug_assert!(block_i < 9);
         self.0 & (1 << (block_i + BOARD_SIZE)) != 0
@@ -437,3 +436,18 @@ pub fn perft_with_progress(depth: u16, pos: &mut Position) {
         println!("Done. Total: {}", total);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    #[test]
+    fn test_blockwon() {
+        init_moves();
+        assert!(get_block_won(0b111111111));
+        assert!(get_block_won(0b111000000));
+        assert!(!get_block_won(0b000000000));
+    }
+}
+

@@ -14,6 +14,8 @@ fn next_line(stdin: &mut Stdin) -> String {
 }
 
 fn main() {
+    init_moves();
+    init_engine();
     let mut stdin = io::stdin();
     let mut pos = Position::new();
     let mut depth: i32 = 5;

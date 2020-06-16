@@ -7,3 +7,4 @@
 
 * Finish dead-drawn implementation
 * quiet search
+* clean up some TODOs. Some of them are important

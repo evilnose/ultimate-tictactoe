@@ -1,5 +1,5 @@
 use uttt::moves::*;
-use uttt::engine;
+
 mod common;
 
 #[test]
