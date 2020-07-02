@@ -1,16 +1,16 @@
-use crate::moves::*;
 
 pub type Score = f32;
 
 // don't exceed these pls
-pub(crate) const SCORE_LOSS: f32 = -1e6;
-pub(crate) const SCORE_WIN: f32 = 1e6;
-pub(crate) const SCORE_NEG_INF: f32 = -1e7;
-pub(crate) const SCORE_POS_INF: f32 = 1e7;
+pub(crate) const SCORE_NEG_INF: f32 = -1000000.0;
+pub(crate) const SCORE_POS_INF: f32 = 1000000.0;
 
-pub struct SearchResult {
-    pub best_move: Idx,
-    pub eval: Score,
-}
+/* SEARCH PARAMETERS */
 
-pub(crate) const MAX_SEARCH_PLIES: u16 = 20;
+// add noise to eval if the remaining search depth equals to this
+pub(crate) const NOISE_DEPTH: u16 = 5;
+
+// add noise if the number of moves made is le
+// NOISE_MOVE_MAX and ge NOISE_MOVES_MIN
+//pub(crate) const NOISE_MOVES_MAX: usize = 0;
+//pub(crate) const NOISE_MOVES_MIN: usize = 0;

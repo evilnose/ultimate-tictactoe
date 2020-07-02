@@ -169,19 +169,14 @@ fn bool_to_block(filled: bool) -> u128 {
 }
 
 // tzcnt() is not implemented for u128. I emulate it here
-trait MyBitIntr {
+trait MyTzcnt {
     fn tzcnt(&self) -> Self;
-    fn popcnt(&self) -> Self;
 }
 
-impl MyBitIntr for u128 {
+impl MyTzcnt for u128 {
     fn tzcnt(&self) -> Self {
         let cnt1 = (0i64 - ((*self as u64) == 0u64) as i64) & ((*self >> 64) as u64).tzcnt() as i64;
         return cnt1 as u128 + (*self as u64).tzcnt() as u128;
-    }
-
-    fn popcnt(&self) -> Self {
-        ((*self as u64).popcnt() + ((*self >> 64) as u64).popcnt()) as Self
     }
 }
 
@@ -195,10 +190,6 @@ impl Moves {
 
     pub fn contains(&self, index: Idx) -> bool {
         self.0 & (1u128 << index) != 0
-    }
-
-    pub fn remove(&mut self, index: Idx) {
-        self.0 &= !(1u128 << index);
     }
 }
 
@@ -228,7 +219,7 @@ impl Bitboard {
     // returns block index
     pub(crate) fn set(&mut self, index: Idx) -> u8 {
         debug_assert!(index < BOARD_SIZE);
-        //debug_assert_eq!(self.0 & (1u128 << index), 0);
+        debug_assert_eq!(self.0 & (1u128 << index), 0);
         self.0 |= 1u128 << index;
 
         // update block occupancy if won this block
@@ -380,11 +371,6 @@ impl Position {
         debug_assert_eq!(self.bitboards[1].0 >> (BOARD_SIZE + 9), 0);
 
         return true;
-    }
-
-    // current ply number
-    pub fn cur_ply(&self) -> u16 {
-        (self.bitboards[0].0 | self.bitboards[1].0).popcnt() as u16
     }
 }
 

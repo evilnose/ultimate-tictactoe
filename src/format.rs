@@ -31,8 +31,6 @@ impl Position {
      ...|...|... 0;
     */
     pub fn from_compact_board(repr: &str) -> Position {
-        let repr = repr.trim();
-        let repr = repr.replace("\r\n", "\n");
         assert!(repr.len() == 133);
         let mut pos = Position::new();
         let mut n_x = 0;

@@ -2,7 +2,7 @@ use crate::moves::*;
 use crate::engine::config::*;
 use crate::engine::eval::*;
 
-// brute force negamax with no pruning TODO remove or move to Worker
+// brute force negamax with no pruning
 pub fn brute_force_search(depth: u16, pos: &mut Position, eval_fn: EvalFn) -> Score {
     debug_assert!(pos.assert());
 
