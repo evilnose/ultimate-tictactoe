@@ -1,46 +1,153 @@
-use uttt::engine::*;
-use uttt::moves::*;
-use std::io::{self, BufRead, Stdin};
 use std::env;
+use std::thread;
+use std::time::Duration;
+use std::sync::mpsc;
+use std::collections::HashMap;
 
-// TODO duplicate code in interface.rs
-fn next_line(stdin: &mut Stdin) -> String {
-    stdin
-        .lock()
-        .lines()
-        .next()
-        .expect("there was no next line")
-        .expect("the line could not be read")
-}
+use uttt::engine::*;
+use uttt::engine::config::*;
+use uttt::engine::utils::*;
+use uttt::moves::*;
 
 fn main() {
+    let mut nb_stdin = NonBlockingStdin::new();
     init_moves();
     init_engine();
-    let mut stdin = io::stdin();
-    let mut pos = Position::new();
-    let mut depth: i32 = 5;
-
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 2 {
-        panic!("usage: ./main [depth]");
-    }
-
-    if args.len() == 2 {
-        depth = args[1].parse().expect("depth need to be an integer");
-        if depth <= 0 {
-            panic!("depth needs to be > 0");
-        }
-    }
-
+    let mut client = Client::new();
     loop {
-        let line = next_line(&mut stdin);
-        let mov: i32 = line.parse().expect("expected i32");
-        if mov != -1 {
-            assert!(mov >= 0);
-            pos.make_move(mov as Idx);
-        }
-        let best = best_move(depth as u16, &mut pos);
-        pos.make_move(best.0);
-        println!("{}", best.0);
+        client.tic();
+        let line = nb_stdin.try_nextline();
+        match line {
+            Some(line) => {
+                eprintln!("GARY: received command: {}", line);
+                let split = line.split_whitespace().collect::<Vec<&str>>();
+                match split[0] {
+                    "uti" => println!("utiok"),
+                    "id" => println!("myid name=barbar;version=0.0.1"),
+                    "pos" => client.handle_pos(split),
+                    "search" => client.handle_search(split),
+                    _ => eprintln!("unknown command: '{}'", split[0]),
+                };
+            },
+            None => {}
+        };
     }
+}
+
+struct Client {
+    pos: Position,
+    searching: bool,
+    receiver: Option<mpsc::Receiver<SearchResult>>,
+}
+
+impl Client {
+    fn new() -> Client {
+        Client {
+            pos: Position::new(),
+            searching: false,
+            receiver: None,
+        }
+    }
+
+    // called every loop. Sends whatever needed to UTI 
+    fn tic(&mut self) {
+        if self.searching {
+            // check if search finished
+            match self.receiver.as_ref().unwrap().try_recv() {
+                Ok(search_res) => {
+                    self.searching = false;
+                    eprintln!("GARY: sending 'info best_move={}; eval={}'", search_res.best_move, search_res.eval);
+                    println!("info best_move={}; eval={}", search_res.best_move, search_res.eval);
+                },
+                Err(mpsc::TryRecvError::Empty) => {},
+                Err(mpsc::TryRecvError::Disconnected) => panic!("fatal: search channel disconnected"),
+            }
+        }
+    }
+
+    fn handle_pos(&mut self, split: Vec<&str>) {
+        if split.len() < 2 {
+            eprintln!("error: pos command needs a subcommand");
+            return;
+        }
+
+        match split[1] {
+            "start" => self.pos = Position::new(),
+            "bgn" => {
+                if split.len() < 3 {
+                    eprintln!("error: need bgn string");
+                    return;
+                }
+                self.pos = Position::from_bgn(split[2]);
+            },
+            "moves" => {
+                for i in 2..split.len() {
+                    self.pos.make_move(split[i].parse::<Idx>().unwrap());
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn handle_search(&mut self, split: Vec<&str>) {
+        if self.searching {
+            eprintln!("error: search in progress");
+            return;
+        }
+        if split.len() < 2 {
+            eprintln!("error: search needs a subcommand");
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.receiver = Some(rx);
+
+        //let remaining = &split[2..].join("");
+        match split[1] {
+            "free" =>  {
+                // TODO call parse_keyvalue and get xtime otime etc.
+                if split.len() < 4 {
+                    eprintln!("error: too few arguments for 'search free'");
+                    return;
+                }
+                let xtime: u64 = split[2].parse().expect("'search free' <xtime> <otime>");
+                let otime: u64 = split[2].parse().expect("'search free' <xtime> <otime>");
+                let localpos = self.pos.clone();
+                thread::spawn(move || {
+                    let worker = Worker::from_position(&localpos);
+                    tx.send(worker.search_free(xtime, otime)).unwrap();
+                });
+                self.searching = true;
+            },
+            "depth" => {
+                panic!("not implemented");
+            },
+            "time" => {
+                panic!("not implemented");
+            },
+            "nodes" => {
+                panic!("not implemented");
+            },
+            "forever" => {
+                panic!("not implemented");
+            },
+            _ => eprintln!("error: unknown search subcommand"),
+        }
+    }
+}
+
+fn parse_keyvalue(line: &str) -> HashMap<&str, &str> {
+    let mut map = HashMap::new();
+    let tokens = line.split(";");
+    for tok in tokens {
+        //let tok = tok.trim();
+        let kv = tok.split("=").collect::<Vec<&str>>();
+        if kv.len() != 2 {
+            eprintln!("error: key-value pair format incorrect");
+            continue;
+        }
+
+        map.insert(kv[0].trim(), kv[1].trim());
+    }
+    map
 }
