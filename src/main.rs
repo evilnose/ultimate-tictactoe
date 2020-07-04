@@ -1,8 +1,8 @@
-use std::env;
 use std::thread;
-use std::time::Duration;
 use std::sync::mpsc;
 use std::collections::HashMap;
+
+extern crate uttt;
 
 use uttt::engine::*;
 use uttt::engine::config::*;

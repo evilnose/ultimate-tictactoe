@@ -7,7 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitintr = "0.3"
 
 [dev-dependencies]
 criterion = "0.3"
@@ -16,6 +15,11 @@ criterion = "0.3"
 debug = true
 
 [lib]
+bench = false
+
+[[bin]]
+name = "codinggame"
+path = "src/codinggame.rs"
 bench = false
 
 [[bin]]

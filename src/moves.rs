@@ -1,4 +1,3 @@
-use bitintr::*;
 use std::slice::Iter;
 
 /*
@@ -79,7 +78,7 @@ pub fn init_moves() {
             if their_occ & win_occ != 0 {
                 continue;  // I cannot win this route
             }
-            let remaining: u8 = (3 - (win_occ & my_occ).popcnt()) as u8;
+            let remaining: u8 = (3 - (win_occ & my_occ).count_ones()) as u8;
             counts[remaining as usize] += 1;
             min_count = std::cmp::min(min_count, remaining);
         }
@@ -168,23 +167,6 @@ fn bool_to_block(filled: bool) -> u128 {
     ((0i128 - (filled as i128)) & BLOCK_OCC_I128) as u128
 }
 
-// tzcnt() is not implemented for u128. I emulate it here
-trait MyBitIntr {
-    fn tzcnt(&self) -> Self;
-    fn popcnt(&self) -> Self;
-}
-
-impl MyBitIntr for u128 {
-    fn tzcnt(&self) -> Self {
-        let cnt1 = (0i64 - ((*self as u64) == 0u64) as i64) & ((*self >> 64) as u64).tzcnt() as i64;
-        return cnt1 as u128 + (*self as u64).tzcnt() as u128;
-    }
-
-    fn popcnt(&self) -> Self {
-        ((*self as u64).popcnt() + ((*self >> 64) as u64).popcnt()) as Self
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct Moves(u128);
 
@@ -209,7 +191,7 @@ impl Iterator for Moves {
         match self.0 {
             0 => None,
             n => {
-                let i = n.tzcnt();
+                let i = n.trailing_zeros();
                 self.0 &= !(1 << i);
                 Some(i as Idx)
             }
@@ -384,7 +366,7 @@ impl Position {
 
     // current ply number
     pub fn cur_ply(&self) -> u16 {
-        (self.bitboards[0].0 | self.bitboards[1].0).popcnt() as u16
+        (self.bitboards[0].0 | self.bitboards[1].0).count_ones() as u16
     }
 }
 

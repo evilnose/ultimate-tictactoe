@@ -3,13 +3,10 @@ pub mod eval;
 pub mod search;
 pub mod utils;
 
-use std::time::Duration;
 use std::time::Instant;
-use std::thread;
 
 use crate::engine::config::*;
 use crate::engine::eval::*;
-use crate::engine::search::*;
 use crate::moves::*;
 
 // one worker per thread. used for searching
