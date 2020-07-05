@@ -29,8 +29,11 @@ impl Position {
      ...|...|...
      ...|...|...
      ...|...|... 0;
+    
+     If auto_side is true, automatically determine which side to move based on the numbers of pieces
+     played (and the param to_move will not be used). Otherwise, use to_move as the side
     */
-    pub fn from_compact_board(repr: &str) -> Position {
+    pub fn from_compact_board(repr: &str, to_move: Side, auto_side: bool) -> Position {
         let repr = repr.trim();
         let repr = repr.replace("\r\n", "\n");
         assert!(repr.len() == 133);
@@ -84,11 +87,15 @@ impl Position {
                 pos.hopeless_occ[side.other() as usize] |= (get_block_hopeless(block_occ) as B33) << bi;
             }
         }
-        pos.to_move = match n_x - n_o {
-            0 => Side::X,
-            1 => Side::O,
-            _ => panic!("Number of X and O not possible"),
-        };
+        if auto_side {
+            pos.to_move = match n_x - n_o {
+                0 => Side::X,
+                1 => Side::O,
+                _ => panic!("Number of X and O not possible"),
+            };
+        } else {
+            pos.to_move = to_move;
+        }
         return pos;
     }
 

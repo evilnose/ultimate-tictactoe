@@ -1,4 +1,5 @@
 use std::slice::Iter;
+use std::iter::Peekable;
 
 /*
 Define block to be each 3x3 block of cells.
@@ -257,6 +258,11 @@ impl Bitboard {
     pub fn has_captured(&self, block_i: u8) -> bool {
         debug_assert!(block_i < 9);
         self.0 & (1 << (block_i + BOARD_SIZE)) != 0
+    }
+
+    #[inline(always)]
+    pub fn n_captured(&self) -> u8 {
+        return self.captured_occ().count_ones() as u8;
     }
 }
 

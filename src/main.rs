@@ -19,7 +19,7 @@ fn main() {
         let line = nb_stdin.try_nextline();
         match line {
             Some(line) => {
-                eprintln!("GARY: received command: {}", line);
+                eprintln!("NOTE: received command: {}", line);
                 let split = line.split_whitespace().collect::<Vec<&str>>();
                 match split[0] {
                     "uti" => println!("utiok"),
@@ -56,7 +56,7 @@ impl Client {
             match self.receiver.as_ref().unwrap().try_recv() {
                 Ok(search_res) => {
                     self.searching = false;
-                    eprintln!("GARY: sending 'info best_move={}; eval={}'", search_res.best_move, search_res.eval);
+                    eprintln!("NOTE: sending 'info best_move={}; eval={}'", search_res.best_move, search_res.eval);
                     println!("info best_move={}; eval={}", search_res.best_move, search_res.eval);
                 },
                 Err(mpsc::TryRecvError::Empty) => {},

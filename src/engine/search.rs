@@ -2,6 +2,7 @@ use crate::moves::*;
 use crate::engine::config::*;
 use crate::engine::eval::*;
 
+/*
 // brute force negamax with no pruning TODO remove or move to Worker
 pub fn brute_force_search(depth: u16, pos: &mut Position, eval_fn: EvalFn) -> Score {
     debug_assert!(pos.assert());
@@ -10,7 +11,7 @@ pub fn brute_force_search(depth: u16, pos: &mut Position, eval_fn: EvalFn) -> Sc
     // note only the last moved side could have won so only
     // one call to is_won() is made
     if pos.is_won(pos.to_move.other()) {
-        return -1000.0;
+        return -SCORE_LOSS;
     } else if pos.is_drawn() {
         return 0.0;
     }
@@ -33,3 +34,5 @@ pub fn brute_force_search(depth: u16, pos: &mut Position, eval_fn: EvalFn) -> Sc
     assert_ne!(max_score, SCORE_NEG_INF);
     return max_score;
 }
+
+*/

@@ -58,12 +58,15 @@ impl Worker {
             //alloc_millis = std::cmp::max(alloc_millis, 5000);
         }
 
-        eprintln!("GARY: secs remaining: {}; allocated {}", my_millis as f32 /1000.0, alloc_millis as f32 /1000.0);
+        eprintln!("NOTE: secs remaining: {}; allocated {}", my_millis as f32 /1000.0, alloc_millis as f32 /1000.0);
+        return self.search_fixed_time(alloc_millis);
+    }
 
-        let mut moves = self.position.legal_moves();
+    pub fn search_fixed_time(&self, alloc_millis: u128) -> SearchResult {
+        let moves = self.position.legal_moves();
 
-        let last_best = moves.next().expect("error: no legal moves");
-        let mut best = last_best;
+        let mut t_moves = moves.clone();
+        let mut best = t_moves.next().expect("error: no legal moves");
         let mut best_score = SCORE_NEG_INF;
 
         let start_search = Instant::now();
@@ -74,21 +77,17 @@ impl Worker {
             // search last best move first
             {
                 let mut localpos = self.position.clone();
-                localpos.make_move(last_best);
-                let score = self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
-                if score > best_score {
-                    best_score = score;
-                    // no need to update best since it is already best_move == besc
-                }
-                localmoves.remove(last_best);
+                localpos.make_move(best);
+                best_score = -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
+                localmoves.remove(best);
             }
 
             // search the remaining moves
             for mv in localmoves {
                 // check if exceeded time
-                if start_search.elapsed().as_millis() >= alloc_millis {
-                    eprintln!("GARY: stopping search at depth {} and move {}", depth, move_idx);
-                    eprintln!("GARY: actual elapsed: {}", start_search.elapsed().as_secs_f32());
+                if start_search.elapsed().as_millis() >= alloc_millis - 40 {
+                    eprintln!("NOTE: stopping search at depth {} and move {}", depth, move_idx);
+                    eprintln!("NOTE: actual elapsed: {}", start_search.elapsed().as_secs_f32());
                     return SearchResult {
                         best_move: best,
                         eval: best_score,
@@ -98,16 +97,17 @@ impl Worker {
 
                 let mut localpos = self.position.clone();
                 localpos.make_move(mv);
-                let score = self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
+                let score = -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
                 if score > best_score {
                     best_score = score;
                     best = mv;
                 }
             }
+
         }
 
-        eprintln!("GARY: stopping search since MAX_SEARCH_PLIES exceeded");
-        eprintln!("GARY: actual elapsed: {}", start_search.elapsed().as_secs_f32());
+        eprintln!("NOTE: stopping search since MAX_SEARCH_PLIES exceeded");
+        eprintln!("NOTE: actual elapsed: {}", start_search.elapsed().as_secs_f32());
         return SearchResult {
             best_move: best,
             eval: best_score,
@@ -131,9 +131,19 @@ impl Worker {
         // one call to is_won() is made
         // TODO do we need to check for this? would alpha-beta take care of this
         if pos.is_won(pos.to_move.other()) {
-            return SCORE_NEG_INF;
+            return SCORE_LOSS;
         } else if pos.is_drawn() {
-            return 0.0;
+            // NOTE that one side could still be considered won in some rulesets by comparing
+            // the total number of blocks occupied
+            let diff = pos.bitboards[0].n_captured() as i16 - pos.bitboards[1].n_captured() as i16;
+            if diff != 0 {
+                let sign = (diff as f32).signum();
+                // e.g. if sign is positive and side is X then it's very good.
+                return sign * side_multiplier(pos.to_move) * SCORE_WIN;
+            } else {
+                // actually dead drawn
+                return 0.0;
+            }
         } else if depth == 0 {
             let f = self.eval_fn;
             return f(pos);
@@ -164,7 +174,7 @@ pub fn init_engine() {
 pub fn best_move(depth: u16, pos: &Position) -> (Idx, Score) {
     debug_assert!(depth >= 1);
     debug_assert!(!pos.is_over());
-    let mut best_score = SCORE_LOSS;
+    let mut best_score = SCORE_NEG_INF;
     let mut best_move = NULL_IDX;
 
     for mov in pos.legal_moves() {
