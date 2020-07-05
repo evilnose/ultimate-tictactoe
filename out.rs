@@ -1,7 +1,6 @@
 use crate::engine::*;
 use crate::engine::config::*;
 use crate::engine::eval::*;
-use crate::engine::search::*;
 use crate::engine::utils::*;
 use crate::format::*;
 use crate::moves::*;
@@ -610,11 +609,6 @@ pub mod engine {
             (1 - 2 * (side as i32)) as Score
         }
     }
-    pub mod search {
-        use crate::engine::config::*;
-        use crate::engine::eval::*;
-        use crate::moves::*;
-    }
     pub mod utils {
         use std::io;
         use std::sync::mpsc;
@@ -651,17 +645,22 @@ pub mod engine {
         nodes_searched: u64,
     }
     impl Worker {
-        pub fn from_position(pos: &Position) -> Worker {
+        pub fn new(pos: &Position, tx: mpsc::Sender) -> Worker {
             Worker {
                 position: pos.clone(),
                 eval_fn: eval,
                 nodes_searched: 0,
             }
         }
-        pub fn search_till_depth(&self, depth: u16) -> Score {
+        fn _search_till_depth(&self, depth: u16) -> Score {
             self.alpha_beta_dfs(depth, &self.position, SCORE_NEG_INF, SCORE_POS_INF)
         }
-        pub fn search_free(&self, x_millis: u64, o_millis: u64) -> SearchResult {
+        pub fn search_till_depth(&mut self, depth: u16) -> Score {
+            self.nodes_searched = 0;
+            self.alpha_beta_dfs(depth, &self.position, SCORE_NEG_INF, SCORE_POS_INF)
+        }
+        pub fn search_free(&mut self, x_millis: u64, o_millis: u64) -> SearchResult {
+            self.nodes_searched = 0;
             let my_millis = match self.position.to_move {
                 Side::X => x_millis,
                 Side::O => o_millis,
@@ -698,7 +697,7 @@ pub mod engine {
                     localmoves.remove(best);
                 }
                 for mv in localmoves {
-                    if start_search.elapsed().as_millis() >= alloc_millis - 40 {
+                    if start_search.elapsed().as_millis() >= alloc_millis - 50 {
                         eprintln!(
                             "NOTE: stopping search at depth {} and move {}",
                             depth, move_idx
@@ -716,7 +715,7 @@ pub mod engine {
                     let mut localpos = self.position.clone();
                     localpos.make_move(mv);
                     let score =
-                        -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
+                        -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, -best_score);
                     if score > best_score {
                         best_score = score;
                         best = mv;
@@ -776,7 +775,7 @@ pub mod engine {
         for mov in pos.legal_moves() {
             let mut temp = pos.clone();
             temp.make_move(mov);
-            let worker = Worker::from_position(&temp);
+            let mut worker = Worker::from_position(&temp);
             let score = -worker.search_till_depth(depth - 1);
             if score > best_score {
                 best_score = score;

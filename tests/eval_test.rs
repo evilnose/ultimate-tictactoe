@@ -18,10 +18,11 @@ fn stupid_search() {
     40, 39, 30, 35, 74, 24, 58, 42, 61, 63, 5, 53, 80, 77, 45, 6, 14, 50, 47, 23, 46, 9, 75",
     );
     println!("{}", pos.to_pretty_board());
-    let tup = best_move(5, &mut pos);
-    assert!(tup.1 > 0.0);
-    let tup = best_move(6, &mut pos);
-    assert!(tup.1 > 0.0);
+    panic!("Fix best_move first. Implement generic termination function");
+    //let tup = best_move(5, &mut pos);
+    // assert!(tup.1 > 0.0);
+    //let tup = best_move(6, &mut pos);
+    // assert!(tup.1 > 0.0);
 }
 
 #[test]

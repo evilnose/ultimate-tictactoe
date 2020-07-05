@@ -7,22 +7,11 @@
 Note that `bundle` is my fork of bundle, which does not automatically format and uses the first
 bin target in Cargo.toml
 
-* `bundle . > out.rs`
-* `rustfmt out.rs`
-* copy the following and paste it to the top of `out.rs`:
-```
-use crate::engine::*;
-use crate::engine::config::*;
-use crate::engine::eval::*;
-use crate::engine::search::*;
-use crate::engine::utils::*;
-use crate::format::*;
-use crate::moves::*;
-```
+Run `./scripts/bundle.sh` in a unix-based terminal
 
 ## TODOs
 
 * Finish dead-drawn implementation
-* quiet search
+* quiet search (quiet search idea. match small board with big board -- check if there are forced moves)
 * clean up some TODOs. Some of them are important
-* some move ordering, by capturing a block if possible
+* some move ordering, by capturing a block if possible (is this a good idea? capturing blocks can be bad)

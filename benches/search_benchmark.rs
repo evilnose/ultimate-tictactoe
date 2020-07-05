@@ -8,7 +8,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut pos = Position::new();
     init_moves();
     engine::init_engine();
-    c.bench_function("search 6", |b| b.iter(|| engine::best_move(black_box(6), black_box(&mut pos))));
+    panic!("Fix best_move first. Implement generic termination function");
+    //c.bench_function("search 6", |b| b.iter(|| engine::best_move(black_box(6), black_box(&mut pos))));
 }
 
 criterion_group!(benches, criterion_benchmark);

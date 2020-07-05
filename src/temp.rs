@@ -33,8 +33,8 @@ fn main() {
 
     println!("{}", pos.to_pretty_board());
     let now = Instant::now();
-    let worker = Worker::from_position(&pos);
-    let res = worker.search_fixed_time(80);
+    let manager = Manager::from_position(pos);
+    let res = manager.search_fixed_time(80);
 
     let elapsed = now.elapsed();
     eprintln!("elapsed: {} ms. move: {}, eval: {}", elapsed.as_millis(), res.best_move, res.eval);

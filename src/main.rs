@@ -99,9 +99,6 @@ impl Client {
             return;
         }
 
-        let (tx, rx) = mpsc::channel();
-        self.receiver = Some(rx);
-
         //let remaining = &split[2..].join("");
         match split[1] {
             "free" =>  {
@@ -112,11 +109,10 @@ impl Client {
                 }
                 let xtime: u64 = split[2].parse().expect("'search free' <xtime> <otime>");
                 let otime: u64 = split[2].parse().expect("'search free' <xtime> <otime>");
-                let localpos = self.pos.clone();
-                thread::spawn(move || {
-                    let worker = Worker::from_position(&localpos);
-                    tx.send(worker.search_free(xtime, otime)).unwrap();
-                });
+
+                let mut manager = Manager::from_position(self.pos);
+                manager.search_free(xtime, otime);
+
                 self.searching = true;
             },
             "depth" => {

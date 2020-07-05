@@ -224,16 +224,17 @@ fn main() {
 
             player_move = false;
         } else {
-            let idx;
+            panic!("Fix best_move first. Implement generic termination function");
             println!("Thinking...");
-            let tup = best_move(context.depth, &mut pos);
-            idx = tup.0;
-            context.eval = tup.1;
-            pos.make_move(idx);
-            context.history.push(idx.to_string());
-            println!("Your opponent played {} {}", idx / 9, idx % 9);
-            println!();
-            player_move = true;
+            //let idx;
+            // let tup = best_move(context.depth, &mut pos);
+            // idx = tup.0;
+            // context.eval = tup.1;
+            // pos.make_move(idx);
+            // context.history.push(idx.to_string());
+            // println!("Your opponent played {} {}", idx / 9, idx % 9);
+            // println!();
+            // player_move = true;
         }
     }
 }

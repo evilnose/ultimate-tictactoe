@@ -44,15 +44,15 @@ fn main() {
         }
 
         let now = Instant::now();
-        let worker = Worker::from_position(&mut pos);
-        let res = worker.search_fixed_time(100);
+        let manager = Manager::from_position(pos);
+        let res = manager.search_fixed_time(100);
 
         let elapsed = now.elapsed();
-        eprintln!("elapsed: {} ms. move: {}, eval: {}", elapsed.as_millis(), res.best_move, res.eval);
+        //eprintln!("elapsed: {} ms. move: {}, eval: {}", elapsed.as_millis(), res.best_move, res.eval);
         let idx = res.best_move;
         let col = ((idx/9) % 3)*3 + (idx % 3);
         let row = ((idx/9) / 3)*3 + (idx % 9)/3;
         pos.make_move(idx);
-        println!("{} {}", row, col);
+        println!("{} {} Elapsed: {}, {} ms", row, col, res.eval, elapsed.as_millis());
     }
 }
