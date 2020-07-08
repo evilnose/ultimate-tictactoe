@@ -122,14 +122,25 @@ pub mod moves {
     #[derive(Copy, Clone)]
     pub struct Moves(u128);
     impl Moves {
+        #[inline(always)]
         pub fn size(&self) -> usize {
             self.0.count_ones() as usize
         }
+        #[inline(always)]
         pub fn contains(&self, index: Idx) -> bool {
             self.0 & (1u128 << index) != 0
         }
+        #[inline(always)]
+        pub fn add(&mut self, index: Idx) {
+            self.0 |= 1u128 << index;
+        }
+        #[inline(always)]
         pub fn remove(&mut self, index: Idx) {
             self.0 &= !(1u128 << index);
+        }
+        #[inline(always)]
+        pub fn intersect(&self, other: Moves) -> Moves {
+            Moves(self.0 & other.0)
         }
     }
     impl Iterator for Moves {
@@ -266,6 +277,28 @@ pub mod moves {
         }
         pub fn cur_ply(&self) -> u16 {
             (self.bitboards[0].0 | self.bitboards[1].0).count_ones() as u16
+        }
+        #[inline]
+        pub fn get_1occ(&self, side: Side) -> Moves {
+            let mut ret = Moves(0);
+            let mut my_occ = self.bitboards[side as usize].0;
+            let mut their_occ = self.bitboards[side as usize].0;
+            while my_occ != 0 {
+                let my_block = my_occ & BLOCK_OCC as u128;
+                let their_block = their_occ & BLOCK_OCC as u128;
+                let bstate = get_block_state(my_block as B33, their_block as B33);
+                if bstate.min_needed() == 1 {
+                    let block_moves = Moves(my_block);
+                    for mov in block_moves {
+                        if get_block_won((my_block | (1 << mov)) as B33) {
+                            ret.add(mov);
+                        }
+                    }
+                }
+                my_occ >>= 9;
+                their_occ >>= 9;
+            }
+            return ret;
         }
     }
     #[allow(dead_code)]
@@ -529,18 +562,14 @@ pub mod engine {
         pub(crate) const SCORE_WIN: f32 = 1e6;
         pub(crate) const SCORE_NEG_INF: f32 = -1e7;
         pub(crate) const SCORE_POS_INF: f32 = 1e7;
-        pub struct SearchResult {
-            pub best_move: Idx,
-            pub eval: Score,
-        }
-        pub(crate) const MAX_SEARCH_PLIES: u16 = 20;
+        pub(crate) const MAX_SEARCH_PLIES: u16 = 40;
     }
     pub mod eval {
         use crate::engine::config::*;
         use crate::moves::*;
         pub type EvalFn = fn(&Position) -> Score;
         static SC_BLOCK_WON: Score = 8.0;
-        static SC_NEED_1: Score = 4.0;
+        static SC_NEED_1: Score = 3.0;
         static SC_NEED_2: Score = 0.5;
         static SC_NEED_3: Score = 0.1;
         static SC_HOPELESS: Score = 0.0;
@@ -586,7 +615,7 @@ pub mod engine {
                 pos.bitboards[0].captured_occ(),
                 pos.bitboards[1].captured_occ(),
             );
-            ret += big_score * 100.0;
+            ret += big_score * 10.0;
             return ret * side2move;
         }
         pub fn basic_eval(pos: &Position) -> Score {
@@ -638,29 +667,65 @@ pub mod engine {
     use crate::engine::config::*;
     use crate::engine::eval::*;
     use crate::moves::*;
-    use std::time::Instant;
-    pub struct Worker {
-        position: Position,
-        eval_fn: EvalFn,
+    use std::fmt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::{Duration, Instant};
+    struct StopSearch;
+    impl fmt::Debug for StopSearch {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                f,
+                "The search has been signaled to stop. This is used internally by alpha_beta_dfs()"
+            )
+        }
+    }
+    struct SearchState {
+        start_search: Instant,
+        alloc_millis: u64,
         nodes_searched: u64,
     }
-    impl Worker {
-        pub fn new(pos: &Position, tx: mpsc::Sender) -> Worker {
-            Worker {
-                position: pos.clone(),
-                eval_fn: eval,
+    impl SearchState {
+        fn new(alloc_millis: u64) -> SearchState {
+            SearchState {
+                start_search: Instant::now(),
+                alloc_millis: alloc_millis,
                 nodes_searched: 0,
             }
         }
-        fn _search_till_depth(&self, depth: u16) -> Score {
-            self.alpha_beta_dfs(depth, &self.position, SCORE_NEG_INF, SCORE_POS_INF)
+    }
+    pub struct SearchResult {
+        pub best_move: Idx,
+        pub eval: Score,
+    }
+    pub struct Manager {
+        position: Position,
+    }
+    impl Manager {
+        pub fn from_position(pos: Position) -> Manager {
+            Manager { position: pos }
         }
-        pub fn search_till_depth(&mut self, depth: u16) -> Score {
-            self.nodes_searched = 0;
-            self.alpha_beta_dfs(depth, &self.position, SCORE_NEG_INF, SCORE_POS_INF)
+        pub fn search_fixed_time(&self, alloc_millis: u64) -> SearchResult {
+            let (tx, rx) = mpsc::channel();
+            let localpos = self.position;
+            let stop_search = Arc::new(AtomicBool::new(false));
+            let localstop = Arc::clone(&stop_search);
+            let start = Instant::now();
+            thread::spawn(move || {
+                let mut worker = Worker::new(localpos, tx.clone(), localstop);
+                worker.search_fixed_time(alloc_millis);
+            });
+            assert!(alloc_millis > 30);
+            thread::sleep(Duration::from_millis(alloc_millis - 25));
+            stop_search.swap(true, Ordering::Relaxed);
+            if let Ok(res) = rx.recv() {
+                return res;
+            } else {
+                panic!("recv failed!");
+            }
         }
-        pub fn search_free(&mut self, x_millis: u64, o_millis: u64) -> SearchResult {
-            self.nodes_searched = 0;
+        pub fn search_free(&mut self, x_millis: u64, o_millis: u64) {
             let my_millis = match self.position.to_move {
                 Side::X => x_millis,
                 Side::O => o_millis,
@@ -678,112 +743,188 @@ pub mod engine {
                 my_millis as f32 / 1000.0,
                 alloc_millis as f32 / 1000.0
             );
-            return self.search_fixed_time(alloc_millis);
+            self.search_fixed_time(alloc_millis as u64);
         }
-        pub fn search_fixed_time(&self, alloc_millis: u128) -> SearchResult {
+    }
+    struct Worker {
+        position: Position,
+        eval_fn: EvalFn,
+        tx: mpsc::Sender<SearchResult>,
+        stop: Arc<AtomicBool>,
+    }
+    impl Worker {
+        pub fn new(pos: Position, tx: mpsc::Sender<SearchResult>, stop: Arc<AtomicBool>) -> Worker {
+            Worker {
+                position: pos,
+                eval_fn: eval,
+                tx: tx,
+                stop: stop,
+            }
+        }
+        fn search_till_depth(&mut self, depth: u16) -> Score {
+            let mut state = SearchState::new(std::u64::MAX);
+            return self
+                .alpha_beta_dfs(
+                    depth,
+                    self.position,
+                    SCORE_NEG_INF,
+                    SCORE_POS_INF,
+                    &mut state,
+                )
+                .expect("This should not happen, since infinite time was allocated");
+        }
+        pub fn search_fixed_time(&mut self, alloc_millis: u64) {
+            let mut state = SearchState::new(alloc_millis);
             let moves = self.position.legal_moves();
             let mut t_moves = moves.clone();
             let mut best = t_moves.next().expect("error: no legal moves");
             let mut best_score = SCORE_NEG_INF;
-            let start_search = Instant::now();
             for depth in 1..=MAX_SEARCH_PLIES {
-                let mut move_idx = 1;
                 let mut localmoves = moves.clone();
                 {
                     let mut localpos = self.position.clone();
                     localpos.make_move(best);
-                    best_score =
-                        -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, SCORE_POS_INF);
+                    let res = self.alpha_beta_dfs(
+                        depth - 1,
+                        localpos,
+                        SCORE_NEG_INF,
+                        SCORE_POS_INF,
+                        &mut state,
+                    );
+                    best_score = match res {
+                        Ok(s) => -s,
+                        Err(_e) => {
+                            eprintln!("NOTE: stopping at move 1");
+                            self.tx
+                                .send(SearchResult {
+                                    best_move: best,
+                                    eval: best_score,
+                                })
+                                .unwrap();
+                            return;
+                        }
+                    };
                     localmoves.remove(best);
                 }
+                let mut move_idx = 1;
                 for mv in localmoves {
-                    if start_search.elapsed().as_millis() >= alloc_millis - 50 {
-                        eprintln!(
-                            "NOTE: stopping search at depth {} and move {}",
-                            depth, move_idx
-                        );
-                        eprintln!(
-                            "NOTE: actual elapsed: {}",
-                            start_search.elapsed().as_secs_f32()
-                        );
-                        return SearchResult {
-                            best_move: best,
-                            eval: best_score,
-                        };
-                    }
                     move_idx += 1;
                     let mut localpos = self.position.clone();
                     localpos.make_move(mv);
-                    let score =
-                        -self.alpha_beta_dfs(depth - 1, &localpos, SCORE_NEG_INF, -best_score);
+                    let res = self.alpha_beta_dfs(
+                        depth - 1,
+                        localpos,
+                        SCORE_NEG_INF,
+                        -best_score,
+                        &mut state,
+                    );
+                    let score = match res {
+                        Ok(s) => -s,
+                        Err(_e) => {
+                            eprintln!("NOTE: stopping at move {}", move_idx);
+                            self.tx
+                                .send(SearchResult {
+                                    best_move: best,
+                                    eval: best_score,
+                                })
+                                .unwrap();
+                            return;
+                        }
+                    };
                     if score > best_score {
                         best_score = score;
                         best = mv;
                     }
                 }
+                eprintln!("NOTE: depth {}/best {}/eval {}/", depth, best, best_score);
             }
             eprintln!("NOTE: stopping search since MAX_SEARCH_PLIES exceeded");
-            eprintln!(
-                "NOTE: actual elapsed: {}",
-                start_search.elapsed().as_secs_f32()
-            );
-            return SearchResult {
-                best_move: best,
-                eval: best_score,
-            };
+            self.tx
+                .send(SearchResult {
+                    best_move: best,
+                    eval: best_score,
+                })
+                .unwrap();
         }
-        fn alpha_beta_dfs(&self, depth: u16, pos: &Position, alpha: Score, beta: Score) -> Score {
+        fn alpha_beta_dfs(
+            &mut self,
+            depth: u16,
+            pos: Position,
+            alpha: Score,
+            beta: Score,
+            state: &mut SearchState,
+        ) -> Result<Score, StopSearch> {
             debug_assert!(pos.assert());
             if pos.is_won(pos.to_move.other()) {
-                return SCORE_LOSS;
+                state.nodes_searched += 1;
+                return self.check_time(SCORE_LOSS);
             } else if pos.is_drawn() {
+                state.nodes_searched += 1;
                 let diff =
                     pos.bitboards[0].n_captured() as i16 - pos.bitboards[1].n_captured() as i16;
                 if diff != 0 {
                     let sign = (diff as f32).signum();
-                    return sign * side_multiplier(pos.to_move) * SCORE_WIN;
+                    return self.check_time(sign * side_multiplier(pos.to_move) * SCORE_WIN);
                 } else {
-                    return 0.0;
+                    return self.check_time(0.0);
                 }
             } else if depth == 0 {
+                state.nodes_searched += 1;
                 let f = self.eval_fn;
-                return f(pos);
+                let my_1occ = self.position.get_1occ(self.position.to_move);
+                let their_1occ = self.position.get_1occ(self.position.to_move.other());
+                return self.quiesce_search(pos, my_1occ, their_1occ, f);
             }
             let mut alpha = alpha;
             for mov in pos.legal_moves() {
                 let mut temp = pos.clone();
                 temp.make_move(mov);
-                let score = -self.alpha_beta_dfs(depth - 1, &mut temp, -beta, -alpha);
+                let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
                 if score >= beta {
-                    return beta;
+                    return Ok(beta);
                 }
                 if score > alpha {
                     alpha = score;
                 }
             }
-            return alpha;
+            return Ok(alpha);
+        }
+        #[inline(always)]
+        fn check_time(&mut self, eval: Score) -> Result<Score, StopSearch> {
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(StopSearch);
+            }
+            return Ok(eval);
+        }
+        #[inline(always)]
+        fn quiesce_search(
+            &mut self,
+            pos: Position,
+            my_1occ: Moves,
+            their_1occ: Moves,
+            eval_fn: EvalFn,
+        ) -> Result<Score, StopSearch> {
+            let captures = pos.legal_moves().intersect(my_1occ);
+            if captures.size() != 0 {
+                let mut best = SCORE_NEG_INF;
+                for mov in captures {
+                    let mut temp = pos.clone();
+                    temp.make_move(mov);
+                    let my_1occ = self.position.get_1occ(self.position.to_move);
+                    let their_1occ = self.position.get_1occ(self.position.to_move.other());
+                    let score = -self.quiesce_search(temp, my_1occ, their_1occ, eval_fn)?;
+                    if score > best {
+                        best = score;
+                    }
+                }
+                return self.check_time(best);
+            } else {
+                return self.check_time(eval_fn(&pos));
+            }
         }
     }
     pub fn init_engine() {
         init_block_score_table();
-    }
-    pub fn best_move(depth: u16, pos: &Position) -> (Idx, Score) {
-        debug_assert!(depth >= 1);
-        debug_assert!(!pos.is_over());
-        let mut best_score = SCORE_NEG_INF;
-        let mut best_move = NULL_IDX;
-        for mov in pos.legal_moves() {
-            let mut temp = pos.clone();
-            temp.make_move(mov);
-            let mut worker = Worker::from_position(&temp);
-            let score = -worker.search_till_depth(depth - 1);
-            if score > best_score {
-                best_score = score;
-                best_move = mov;
-            }
-        }
-        debug_assert!(best_move != NULL_IDX);
-        return (best_move, best_score * side_multiplier(pos.to_move));
     }
 }
 use std::time::Instant;
@@ -819,19 +960,13 @@ fn main() {
             pos.make_move(index as u8);
         }
         let now = Instant::now();
-        let worker = Worker::from_position(&mut pos);
-        let res = worker.search_fixed_time(100);
+        let manager = Manager::from_position(pos);
+        let res = manager.search_fixed_time(100);
         let elapsed = now.elapsed();
-        eprintln!(
-            "elapsed: {} ms. move: {}, eval: {}",
-            elapsed.as_millis(),
-            res.best_move,
-            res.eval
-        );
         let idx = res.best_move;
         let col = ((idx / 9) % 3) * 3 + (idx % 3);
         let row = ((idx / 9) / 3) * 3 + (idx % 9) / 3;
         pos.make_move(idx);
-        println!("{} {}", row, col);
+        println!("{} {} {}", row, col, res.eval,);
     }
 }

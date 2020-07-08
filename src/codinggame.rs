@@ -53,6 +53,11 @@ fn main() {
         let col = ((idx/9) % 3)*3 + (idx % 3);
         let row = ((idx/9) / 3)*3 + (idx % 9)/3;
         pos.make_move(idx);
-        println!("{} {} Elapsed: {}, {} ms", row, col, res.eval, elapsed.as_millis());
+        println!(
+            "{} {} {}",
+            row,
+            col,
+            res.eval,
+        );
     }
 }

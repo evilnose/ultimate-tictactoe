@@ -15,7 +15,7 @@ pub type EvalFn = fn(&Position) -> Score;
 
 // Scores associated with each situation in a block
 static SC_BLOCK_WON: Score = 8.0;
-static SC_NEED_1: Score = 4.0;
+static SC_NEED_1: Score = 3.0;
 static SC_NEED_2: Score = 0.5; // TODO this can't be the same as 3
 static SC_NEED_3: Score = 0.1;
 static SC_HOPELESS: Score = 0.0; // no chance of winning this block
@@ -93,7 +93,7 @@ pub fn eval(pos: &Position) -> Score {
         pos.bitboards[0].captured_occ(),
         pos.bitboards[1].captured_occ(),
     );
-    ret += big_score * 100.0;
+    ret += big_score * 10.0;
     return ret * side2move;
     /*
     // only need to check if the side just moved has won

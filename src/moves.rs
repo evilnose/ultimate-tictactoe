@@ -172,16 +172,29 @@ fn bool_to_block(filled: bool) -> u128 {
 pub struct Moves(u128);
 
 impl Moves {
+    #[inline(always)]
     pub fn size(&self) -> usize {
         self.0.count_ones() as usize
     }
 
+    #[inline(always)]
     pub fn contains(&self, index: Idx) -> bool {
         self.0 & (1u128 << index) != 0
     }
 
+    #[inline(always)]
+    pub fn add(&mut self, index: Idx) {
+        self.0 |= 1u128 << index;
+    }
+
+    #[inline(always)]
     pub fn remove(&mut self, index: Idx) {
         self.0 &= !(1u128 << index);
+    }
+
+    #[inline(always)]
+    pub fn intersect(&self, other: Moves) -> Moves {
+        Moves(self.0 & other.0)
     }
 }
 
@@ -373,6 +386,37 @@ impl Position {
     // current ply number
     pub fn cur_ply(&self) -> u16 {
         (self.bitboards[0].0 | self.bitboards[1].0).count_ones() as u16
+    }
+
+    // return the occupancy of cells after capturing which a whole block would
+    // be captured
+    #[inline]
+    pub fn get_1occ(&self, side: Side) -> Moves {
+        let mut ret = Moves(0);
+        // iterate over blocks. TODO should implement an iter() function if
+        // this is used more than once
+        let mut my_occ = self.bitboards[side as usize].0;
+        let mut their_occ = self.bitboards[side as usize].0;
+        // when my_occ is 0 there's def no chance that there's any more captures
+        while my_occ != 0 {
+            let my_block = my_occ & BLOCK_OCC as u128;
+            let their_block = their_occ & BLOCK_OCC as u128;
+
+            let bstate = get_block_state(my_block as B33, their_block as B33);
+            if bstate.min_needed() == 1 {
+                // possible captures. Find them all.
+                let block_moves = Moves(my_block);
+                for mov in block_moves {
+                    // this move is what we're looking for
+                    if get_block_won((my_block | (1 << mov)) as B33) {
+                        ret.add(mov);
+                    }
+                }
+            }
+            my_occ >>= 9;
+            their_occ >>= 9;
+        }
+        return ret;
     }
 }
 

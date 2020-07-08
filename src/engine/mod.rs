@@ -2,28 +2,23 @@ pub mod config;
 pub mod eval;
 pub mod utils;
 
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::thread;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::fmt;
 
 use crate::engine::config::*;
 use crate::engine::eval::*;
 use crate::moves::*;
 
-// used to signal that search has stopped
-// TODO improve this
-#[derive(Debug)]
+// used to break out of recursion
 struct StopSearch;
 
-// sent to the manager to update state of the search periodically,
-// probably every time the depth increases
-enum SearchInfo {
-    Update {
-        best_move: Idx,
-        eval: Score
-    },
-    Terminate,
+impl fmt::Debug for StopSearch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "The search has been signaled to stop. This is used internally by alpha_beta_dfs()")
+    }
 }
 
 // keeps track of the current search state, e.g. node count, time,
@@ -65,38 +60,33 @@ impl Manager {
     pub fn search_fixed_time(&self, alloc_millis: u64) -> SearchResult {
         let (tx, rx) = mpsc::channel();
         let localpos = self.position;
-        
+
+        let stop_search = Arc::new(AtomicBool::new(false));
+        let localstop = Arc::clone(&stop_search);
+
+        let start = Instant::now();
+
         thread::spawn(move || {
-            let mut worker = Worker::new(localpos, tx);
+            let mut worker = Worker::new(localpos, tx.clone(), localstop);
             worker.search_fixed_time(alloc_millis);
         });
 
-        let mut latest = SearchResult {
-            best_move: NULL_IDX,
-            eval: 0.0,
-        };
+        // expect something reasonable
+        assert!(alloc_millis > 30);
 
-        loop {
-            match rx.try_recv() {
-                Ok(info) => {
-                    match info {
-                        SearchInfo::Update {
-                            best_move: b,
-                            eval: e
-                        } => {
-                            latest.best_move = b;
-                            latest.eval = e;
-                        },
-                        SearchInfo::Terminate => {
-                            assert!(latest.best_move != NULL_IDX);
-                            return latest;
-                        },
-                    }
-                },
-                Err(mpsc::TryRecvError::Empty) => {},
-                Err(mpsc::TryRecvError::Disconnected) => panic!("ERROR: search channel disconnected"),
-            }
+        thread::sleep(Duration::from_millis(alloc_millis - 25));
+
+        // tell threads to stop
+        stop_search.swap(true, Ordering::Relaxed);
+
+        // TODO use recv_deadline and if timed out return last updated result
+        if let Ok(res) = rx.recv() {
+            return res;
+        } else {
+            panic!("recv failed!");
         }
+
+        // the thread should unwrap the recursions and exit shortly after
     }
     
     pub fn search_free(&mut self, x_millis: u64, o_millis: u64) {
@@ -134,15 +124,18 @@ impl Manager {
 struct Worker {
     position: Position,
     eval_fn: EvalFn,
-    sender: mpsc::Sender<SearchInfo>,
+    tx: mpsc::Sender<SearchResult>,
+    stop: Arc<AtomicBool>,
 }
 
 impl Worker {
-    pub fn new(pos: Position, tx: mpsc::Sender<SearchInfo>) -> Worker {
+    // note: takes ownership of tx and stop, so need to make clone
+    pub fn new(pos: Position, tx: mpsc::Sender<SearchResult>, stop: Arc<AtomicBool>) -> Worker {
         Worker {
             position: pos,
             eval_fn: eval, // default to eval; might change later
-            sender: tx,
+            tx: tx,
+            stop: stop,
         }
     }
 
@@ -150,7 +143,8 @@ impl Worker {
     fn search_till_depth(&mut self, depth: u16) -> Score {
         let mut state = SearchState::new(std::u64::MAX);
         // no need for clone since self.position is implicitly copied
-        self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF, &mut state).unwrap()
+        return self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF, &mut state)
+            .expect("This should not happen, since infinite time was allocated");
     }
 
     // TODO implement this in manager
@@ -173,39 +167,61 @@ impl Worker {
                 let res = self.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, SCORE_POS_INF, &mut state);
                 best_score = match res {
                     Ok(s) => -s,
-                    Err(_e) => return,
+                    Err(_e) => {
+                        eprintln!("NOTE: stopping at move 1");
+                        self.tx.send(SearchResult{
+                            best_move: best,
+                            eval: best_score,
+                        }).unwrap();
+                        return;
+                    },  // need to stop search
                 };
                 localmoves.remove(best);
             }
 
+            let mut move_idx = 1;
+
             // search the remaining moves
             for mv in localmoves {
-                self.sender.send(SearchInfo::Update{
-                    best_move: best,
-                    eval: best_score,
-                }).unwrap();
+                move_idx += 1;
+                // self.sender.send(SearchInfo::Update{
+                //     best_move: best,
+                //     eval: best_score,
+                // }).unwrap();
                 let mut localpos = self.position.clone();
                 localpos.make_move(mv);
                 // note that best_score acts as alpha here TODO is this right?
                 let res = self.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score, &mut state);
                 let score = match res {
                     Ok(s) => -s,
-                    Err(_e) => return,
+                    Err(_e) => {
+                        eprintln!("NOTE: stopping at move {}", move_idx);
+                        // timeout
+                        self.tx.send(SearchResult{
+                            best_move: best,
+                            eval: best_score,
+                        }).unwrap();
+                        return;
+                    },
                 };
                 if score > best_score {
                     best_score = score;
                     best = mv;
                 }
             }
-            eprintln!("NOTE: depth {}/move {}/best {}/", depth, best, best_score);
+            eprintln!("NOTE: depth {}/best {}/eval {}/", depth, best, best_score);
         }
 
         eprintln!("NOTE: stopping search since MAX_SEARCH_PLIES exceeded");
-        self.sender.send(SearchInfo::Update{
+        self.tx.send(SearchResult{
             best_move: best,
             eval: best_score,
         }).unwrap();
-        self.sender.send(SearchInfo::Terminate).unwrap();
+        // self.sender.send(SearchInfo::Update{
+        //     best_move: best,
+        //     eval: best_score,
+        // }).unwrap();
+        // self.sender.send(SearchInfo::Terminate).unwrap();
     }
 
     /*
@@ -226,7 +242,7 @@ impl Worker {
         // TODO do we need to check for this? would alpha-beta take care of this
         if pos.is_won(pos.to_move.other()) {
             state.nodes_searched += 1;
-            return self.check_time(SCORE_LOSS, state);
+            return self.check_time(SCORE_LOSS);
         } else if pos.is_drawn() {
             state.nodes_searched += 1;
             // NOTE that one side could still be considered won in some rulesets by comparing
@@ -235,15 +251,17 @@ impl Worker {
             if diff != 0 {
                 let sign = (diff as f32).signum();
                 // e.g. if sign is positive and side is X then it's very good.
-                return self.check_time(sign * side_multiplier(pos.to_move) * SCORE_WIN, state);
+                return self.check_time(sign * side_multiplier(pos.to_move) * SCORE_WIN);
             } else {
                 // actually dead drawn
-                return self.check_time(0.0, state);
+                return self.check_time(0.0);
             }
         } else if depth == 0 {
             state.nodes_searched += 1;
             let f = self.eval_fn;
-            return self.check_time(f(&pos), state);
+            let my_1occ = self.position.get_1occ(self.position.to_move);
+            let their_1occ = self.position.get_1occ(self.position.to_move.other());
+            return self.quiesce_search(pos, my_1occ, their_1occ, f);
         }
 
         let mut alpha = alpha;
@@ -265,15 +283,35 @@ impl Worker {
     // called when a leaf node is reached. If timed out, return Err(StopSearch). Otherwise
     // return the given eval wrapped in Result
     #[inline(always)]
-    fn check_time(&mut self, eval: Score, state: &SearchState) -> Result<Score, StopSearch> {
-        if state.nodes_searched % 1000 == 0 {
-            if (state.alloc_millis as i64 - state.start_search.elapsed().as_millis() as i64) < 5 {
-                self.sender.send(SearchInfo::Terminate).unwrap();
-                return Err(StopSearch);
-            }
+    fn check_time(&mut self, eval: Score) -> Result<Score, StopSearch> {
+        if self.stop.load(Ordering::Relaxed) {
+            return Err(StopSearch);
         }
-
         return Ok(eval);
+    }
+
+    // my_1occ is the occupancy of moves I can make to capture a block.
+    // alpha/beta is not used for now since the search space is assumed to be small
+    #[inline(always)]
+    fn quiesce_search(&mut self, pos: Position, my_1occ: Moves, their_1occ: Moves, eval_fn: EvalFn) -> Result<Score, StopSearch> {
+        let captures = pos.legal_moves().intersect(my_1occ);
+        if captures.size() != 0 {
+            let mut best = SCORE_NEG_INF;
+            for mov in captures {
+                let mut temp = pos.clone();
+                temp.make_move(mov);
+
+                let my_1occ = self.position.get_1occ(self.position.to_move);
+                let their_1occ = self.position.get_1occ(self.position.to_move.other());
+                let score = -self.quiesce_search(temp, my_1occ, their_1occ, eval_fn)?;
+                if score > best {
+                    best = score;
+                }
+            }
+            return self.check_time(best);
+        } else {
+            return self.check_time(eval_fn(&pos));
+        }
     }
 }
 

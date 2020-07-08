@@ -11,7 +11,9 @@ Run `./scripts/bundle.sh` in a unix-based terminal
 
 ## TODOs
 
-* Finish dead-drawn implementation
-* quiet search (quiet search idea. match small board with big board -- check if there are forced moves)
+* quiet search - do quiet search if # of moves < N. (make it modal, i.e. once there is a capture, do the capture and all
+moves that come after are captures). Before that, add mobility to eval
+* table
 * clean up some TODOs. Some of them are important
 * some move ordering, by capturing a block if possible (is this a good idea? capturing blocks can be bad)
+* Finish dead-drawn implementation
