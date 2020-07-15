@@ -63,21 +63,6 @@ pub fn eval_block(x_occ: B33, o_occ: B33) -> Score {
     }
 }
 
-/*
-// return the score for one side. After this is called, the score
-// should be negated for O by convention
-#[inline]
-pub fn side_score(pos: &Position, side: Side) -> Score {
-    let bb = &pos.bitboards[side as usize];
-    let mut base_score = bb.captured_occ().count_ones() as Score;
-    for bi in 0..9 {
-        base_score += 0.05 * (bb.get(bi * 9 + 4) as i32 as f32);
-    }
-    // additional score for center block captured
-    return base_score + 0.5 * bb.has_captured(4) as i32 as f32;
-}
-*/
-
 // NOTE: called when pos is not won/lost/drawn; may not work
 // correctly otherwise, and no checks are performed
 pub fn eval(pos: &Position) -> Score {
@@ -94,6 +79,13 @@ pub fn eval(pos: &Position) -> Score {
         pos.bitboards[1].captured_occ(),
     );
     ret += big_score * 10.0;
+
+    let mut mobility = pos.legal_moves().size() as Score / 2.0;
+    if mobility > 5.0 {
+        mobility = 5.0;
+    }
+    ret += mobility;
+
     return ret * side2move;
     /*
     // only need to check if the side just moved has won

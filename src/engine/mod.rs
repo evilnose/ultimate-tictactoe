@@ -2,7 +2,7 @@ pub mod config;
 pub mod eval;
 pub mod utils;
 
-use std::time::{Instant, Duration};
+use std::time::{Duration};
 use std::thread;
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,16 +24,12 @@ impl fmt::Debug for StopSearch {
 // keeps track of the current search state, e.g. node count, time,
 // etc. Used across alpha_beta_dfs
 struct SearchState {
-    start_search: Instant,
-    alloc_millis: u64,
     nodes_searched: u64,
 }
 
 impl SearchState {
     fn new(alloc_millis : u64) -> SearchState {
         SearchState {
-            start_search: Instant::now(),
-            alloc_millis: alloc_millis,
             nodes_searched: 0,
         }
     }
@@ -63,8 +59,6 @@ impl Manager {
 
         let stop_search = Arc::new(AtomicBool::new(false));
         let localstop = Arc::clone(&stop_search);
-
-        let start = Instant::now();
 
         thread::spawn(move || {
             let mut worker = Worker::new(localpos, tx.clone(), localstop);
@@ -184,10 +178,6 @@ impl Worker {
             // search the remaining moves
             for mv in localmoves {
                 move_idx += 1;
-                // self.sender.send(SearchInfo::Update{
-                //     best_move: best,
-                //     eval: best_score,
-                // }).unwrap();
                 let mut localpos = self.position.clone();
                 localpos.make_move(mv);
                 // note that best_score acts as alpha here TODO is this right?
@@ -264,9 +254,30 @@ impl Worker {
             return self.quiesce_search(pos, my_1occ, their_1occ, f);
         }
 
+        let moves = pos.legal_moves();
         let mut alpha = alpha;
+        /*
+        let DROP_CUTOFF = 30;
+        if moves.size() >= DROP_CUTOFF {
+            let indices = (0..DROP_CUTOFF).collect::<Vec<_>>();
+            
+        }*/
+        let my_1occ = pos.get_1occ(pos.to_move);
+        let captures = moves.intersect(my_1occ);
+        let moves = moves.subtract(captures);
+        for mov in captures {
+            let mut temp = pos.clone();
+            temp.make_move(mov);
+            let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
+            if score >= beta {
+                return Ok(beta);
+            }
+            if score > alpha {
+                alpha = score;
+            }
+        }
 
-        for mov in pos.legal_moves() {
+        for mov in moves {
             let mut temp = pos.clone();
             temp.make_move(mov);
             let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;

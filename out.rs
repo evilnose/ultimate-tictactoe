@@ -142,6 +142,10 @@ pub mod moves {
         pub fn intersect(&self, other: Moves) -> Moves {
             Moves(self.0 & other.0)
         }
+        #[inline(always)]
+        pub fn subtract(&self, other: Moves) -> Moves {
+            Moves(self.0 & !other.0)
+        }
     }
     impl Iterator for Moves {
         type Item = Idx;
@@ -616,6 +620,11 @@ pub mod engine {
                 pos.bitboards[1].captured_occ(),
             );
             ret += big_score * 10.0;
+            let mut mobility = pos.legal_moves().size() as Score / 2.0;
+            if mobility > 5.0 {
+                mobility = 5.0;
+            }
+            ret += mobility;
             return ret * side2move;
         }
         pub fn basic_eval(pos: &Position) -> Score {
@@ -663,6 +672,10 @@ pub mod engine {
                 }
             }
         }
+        fn random_bits(n: u8) -> u128 {
+            debug_assert!(n < 81);
+            return 0;
+        }
     }
     use crate::engine::config::*;
     use crate::engine::eval::*;
@@ -671,7 +684,7 @@ pub mod engine {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     struct StopSearch;
     impl fmt::Debug for StopSearch {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -682,17 +695,11 @@ pub mod engine {
         }
     }
     struct SearchState {
-        start_search: Instant,
-        alloc_millis: u64,
         nodes_searched: u64,
     }
     impl SearchState {
         fn new(alloc_millis: u64) -> SearchState {
-            SearchState {
-                start_search: Instant::now(),
-                alloc_millis: alloc_millis,
-                nodes_searched: 0,
-            }
+            SearchState { nodes_searched: 0 }
         }
     }
     pub struct SearchResult {
@@ -711,7 +718,6 @@ pub mod engine {
             let localpos = self.position;
             let stop_search = Arc::new(AtomicBool::new(false));
             let localstop = Arc::clone(&stop_search);
-            let start = Instant::now();
             thread::spawn(move || {
                 let mut worker = Worker::new(localpos, tx.clone(), localstop);
                 worker.search_fixed_time(alloc_millis);
@@ -875,8 +881,23 @@ pub mod engine {
                 let their_1occ = self.position.get_1occ(self.position.to_move.other());
                 return self.quiesce_search(pos, my_1occ, their_1occ, f);
             }
+            let moves = pos.legal_moves();
             let mut alpha = alpha;
-            for mov in pos.legal_moves() {
+            let my_1occ = pos.get_1occ(pos.to_move);
+            let captures = moves.intersect(my_1occ);
+            let moves = moves.subtract(captures);
+            for mov in captures {
+                let mut temp = pos.clone();
+                temp.make_move(mov);
+                let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
+                if score >= beta {
+                    return Ok(beta);
+                }
+                if score > alpha {
+                    alpha = score;
+                }
+            }
+            for mov in moves {
                 let mut temp = pos.clone();
                 temp.make_move(mov);
                 let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;

@@ -31,3 +31,10 @@ impl NonBlockingStdin {
         }
     }
 }
+
+// generate a random number with n random bits set in the lower 81 bits exactly.
+// note: n must be less than 81
+fn random_bits(n: u8) -> u128 {
+    debug_assert!(n < 81);
+    return 0;
+}

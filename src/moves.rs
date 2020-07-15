@@ -196,6 +196,11 @@ impl Moves {
     pub fn intersect(&self, other: Moves) -> Moves {
         Moves(self.0 & other.0)
     }
+
+    #[inline(always)]
+    pub fn subtract(&self, other: Moves) -> Moves {
+        Moves(self.0 & !other.0)
+    }
 }
 
 impl Iterator for Moves {
