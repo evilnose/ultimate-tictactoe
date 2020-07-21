@@ -1,5 +1,5 @@
 use std::slice::Iter;
-use std::iter::Peekable;
+use core::arch::x86_64::*;
 
 /*
 Define block to be each 3x3 block of cells.
@@ -201,6 +201,36 @@ impl Moves {
     pub fn subtract(&self, other: Moves) -> Moves {
         Moves(self.0 & !other.0)
     }
+    
+    // return any move
+    #[inline(always)]
+    pub fn any(&self) -> Idx {
+        return self.0.trailing_zeros() as Idx;
+    }
+
+    /* TODO use xorshift* */
+    #[inline(always)]
+    pub fn nth_move(&self, n: u8) -> Idx {
+        debug_assert!(self.0 != 0);
+
+        let res;
+        let lower_count = (self.0 as u64).count_ones() as u8;
+        if n >= lower_count {
+            let n = n - lower_count;
+            // idx is now in range of u64
+            unsafe {
+                res = (_pdep_u64(1u64 << n, (self.0 >> 64) as u64) as u128) << 64;
+            }
+        } else {
+            unsafe {
+                res = _pdep_u64(1u64 << n, self.0 as u64) as u128;
+            }
+        }
+        debug_assert!(res.count_ones() == 1);
+
+        // one of these is 0 and the other is not
+        return res.trailing_zeros() as Idx;
+    }
 }
 
 impl Iterator for Moves {
@@ -362,6 +392,7 @@ impl Position {
     }
 
     pub fn make_move(&mut self, index: Idx) {
+        debug_assert!(self.legal_moves().contains(index));
         // place piece
         let own_bb = &mut self.bitboards[self.to_move as usize];
         let bi = own_bb.set(index);

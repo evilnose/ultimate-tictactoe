@@ -1,4 +1,5 @@
 use crate::engine::config::*;
+use crate::engine::utils::*;
 use crate::moves::*;
 
 pub type EvalFn = fn(&Position) -> Score;
@@ -80,12 +81,6 @@ pub fn eval(pos: &Position) -> Score {
     );
     ret += big_score * 10.0;
 
-    let mut mobility = pos.legal_moves().size() as Score / 2.0;
-    if mobility > 5.0 {
-        mobility = 5.0;
-    }
-    ret += mobility;
-
     return ret * side2move;
     /*
     // only need to check if the side just moved has won
@@ -109,11 +104,4 @@ mod tests {
         let pos = Position::new();
         basic_eval(&pos);
     }
-}
-
-// simple helper function that returns 1 if equal
-// is true and -1 if not
-#[inline(always)]
-pub(crate) fn side_multiplier(side: Side) -> Score {
-    (1 - 2 * (side as i32)) as Score
 }

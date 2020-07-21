@@ -1,6 +1,11 @@
 use std::io;
 use std::sync::mpsc;
 use std::thread;
+use crate::engine::config::*;
+use crate::moves::*;
+
+const N_NATURAL_LOGS: usize = 80000;
+static mut NATURAL_LOG_TABLE: [f32; N_NATURAL_LOGS] = [0.0; N_NATURAL_LOGS];
 
 pub struct NonBlockingStdin {
     receiver: mpsc::Receiver<String>,
@@ -34,7 +39,41 @@ impl NonBlockingStdin {
 
 // generate a random number with n random bits set in the lower 81 bits exactly.
 // note: n must be less than 81
-fn random_bits(n: u8) -> u128 {
+pub fn random_bits(n: u8) -> u128 {
     debug_assert!(n < 81);
-    return 0;
+    panic!("not implemmented");
+}
+
+
+#[inline(always)]
+pub fn natural_log(x: u32) -> f32 {
+    // TODO optimize. search "fast natural log"
+    unsafe {
+        return NATURAL_LOG_TABLE[x as usize];
+    }
+}
+
+pub(crate) fn init_natural_log_table() {
+    unsafe {
+        NATURAL_LOG_TABLE[0] = 1.0;
+        for i in 0..N_NATURAL_LOGS {
+            NATURAL_LOG_TABLE[i] = (i as f32).log(2.71828182845);
+        }
+    }
+}
+
+// simple helper function that returns 1 if equal
+// is true and -1 if not
+#[inline(always)]
+pub(crate) fn side_multiplier(side: Side) -> Score {
+    (1 - 2 * (side as i32)) as Score
+}
+
+// on codingame, even when the board is filled, whoever has more blocks
+// captured wins. This returns 1 if X has more captured, -1 if O does,
+// and 0 if dead drawn
+#[inline(always)]
+pub(crate) fn codingame_drawn(pos: &Position) -> f32 {
+    let diff = (pos.bitboards[0].n_captured() as i16) - (pos.bitboards[1].n_captured() as i16);
+    return ((diff != 0) as i32 as f32) * (diff as f32).signum();
 }

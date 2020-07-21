@@ -1,12 +1,14 @@
-// codinggame more like codinggae amirite
+// codingame more like codinggae amirite
 use std::io::{self, BufRead};
+use std::time::{Instant};
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
 
 extern crate uttt;
 
 use uttt::engine::*;
 use uttt::moves::*;
-
-use std::time::{Instant};
+use uttt::engine::mcts::*;
 
 macro_rules! parse_input {
     ($x:expr, $t:ident) => ($x.trim().parse::<$t>().unwrap())
@@ -44,12 +46,19 @@ fn main() {
         }
 
         let now = Instant::now();
-        let manager = Manager::from_position(pos);
-        let res = manager.search_fixed_time(100);
+        //let manager = Manager::from_position(pos);
+        //let res = manager.search_fixed_time(100);
+        //let idx = res.best_move;
+        let rng = SmallRng::seed_from_u64(12345);
+        //let rng = SmallRng::from_entropy();
+        let mut mcts = MCTSWorker::new(pos, 1.3, rng);
+        let res = mcts.go(100);
+        let idx = res.best_move;
+        let eval = res.value;
 
         let elapsed = now.elapsed();
+        eprintln!("actual elapsed: {} ms", elapsed.as_millis());
         //eprintln!("elapsed: {} ms. move: {}, eval: {}", elapsed.as_millis(), res.best_move, res.eval);
-        let idx = res.best_move;
         let col = ((idx/9) % 3)*3 + (idx % 3);
         let row = ((idx/9) / 3)*3 + (idx % 9)/3;
         pos.make_move(idx);
@@ -57,7 +66,10 @@ fn main() {
             "{} {} {}",
             row,
             col,
-            res.eval,
+            eval,
         );
+        for e in mcts.pv() {
+            eprintln!("move {}; value {}", e.best_move, e.value);
+        }
     }
 }

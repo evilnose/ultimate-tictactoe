@@ -1,11 +1,9 @@
-use std::thread;
 use std::sync::mpsc;
 use std::collections::HashMap;
 
 extern crate uttt;
 
 use uttt::engine::*;
-use uttt::engine::config::*;
 use uttt::engine::utils::*;
 use uttt::moves::*;
 

@@ -2,11 +2,15 @@ use crate::engine::*;
 use crate::engine::config::*;
 use crate::engine::eval::*;
 use crate::engine::utils::*;
+use crate::engine::mcts::*;
 use crate::format::*;
 use crate::moves::*;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use std::io::{self, BufRead};
+use std::time::Instant;
 pub mod moves {
-    use std::iter::Peekable;
+    use core::arch::x86_64::*;
     use std::slice::Iter;
     pub(crate) type B33 = u16;
     pub type Idx = u8;
@@ -146,6 +150,28 @@ pub mod moves {
         pub fn subtract(&self, other: Moves) -> Moves {
             Moves(self.0 & !other.0)
         }
+        #[inline(always)]
+        pub fn any(&self) -> Idx {
+            return self.0.trailing_zeros() as Idx;
+        }
+        #[inline(always)]
+        pub fn nth_move(&self, n: u8) -> Idx {
+            debug_assert!(self.0 != 0);
+            let res;
+            let lower_count = (self.0 as u64).count_ones() as u8;
+            if n >= lower_count {
+                let n = n - lower_count;
+                unsafe {
+                    res = (_pdep_u64(1u64 << n, (self.0 >> 64) as u64) as u128) << 64;
+                }
+            } else {
+                unsafe {
+                    res = _pdep_u64(1u64 << n, self.0 as u64) as u128;
+                }
+            }
+            debug_assert!(res.count_ones() == 1);
+            return res.trailing_zeros() as Idx;
+        }
     }
     impl Iterator for Moves {
         type Item = Idx;
@@ -265,6 +291,7 @@ pub mod moves {
             self.is_won(Side::X) || self.is_won(Side::O) || self.is_drawn()
         }
         pub fn make_move(&mut self, index: Idx) {
+            debug_assert!(self.legal_moves().contains(index));
             let own_bb = &mut self.bitboards[self.to_move as usize];
             let bi = own_bb.set(index);
             let block_occ = own_bb.get_block(bi);
@@ -560,7 +587,6 @@ pub mod format {
 }
 pub mod engine {
     pub mod config {
-        use crate::moves::*;
         pub type Score = f32;
         pub(crate) const SCORE_LOSS: f32 = -1e6;
         pub(crate) const SCORE_WIN: f32 = 1e6;
@@ -570,6 +596,7 @@ pub mod engine {
     }
     pub mod eval {
         use crate::engine::config::*;
+        use crate::engine::utils::*;
         use crate::moves::*;
         pub type EvalFn = fn(&Position) -> Score;
         static SC_BLOCK_WON: Score = 8.0;
@@ -620,11 +647,6 @@ pub mod engine {
                 pos.bitboards[1].captured_occ(),
             );
             ret += big_score * 10.0;
-            let mut mobility = pos.legal_moves().size() as Score / 2.0;
-            if mobility > 5.0 {
-                mobility = 5.0;
-            }
-            ret += mobility;
             return ret * side2move;
         }
         pub fn basic_eval(pos: &Position) -> Score {
@@ -642,15 +664,15 @@ pub mod engine {
                 basic_eval(&pos);
             }
         }
-        #[inline(always)]
-        pub(crate) fn side_multiplier(side: Side) -> Score {
-            (1 - 2 * (side as i32)) as Score
-        }
     }
     pub mod utils {
+        use crate::engine::config::*;
+        use crate::moves::*;
         use std::io;
         use std::sync::mpsc;
         use std::thread;
+        const N_NATURAL_LOGS: usize = 80000;
+        static mut NATURAL_LOG_TABLE: [f32; N_NATURAL_LOGS] = [0.0; N_NATURAL_LOGS];
         pub struct NonBlockingStdin {
             receiver: mpsc::Receiver<String>,
         }
@@ -672,18 +694,230 @@ pub mod engine {
                 }
             }
         }
-        fn random_bits(n: u8) -> u128 {
+        pub fn random_bits(n: u8) -> u128 {
             debug_assert!(n < 81);
-            return 0;
+            panic!("not implemmented");
+        }
+        #[inline(always)]
+        pub fn natural_log(x: u32) -> f32 {
+            unsafe {
+                return NATURAL_LOG_TABLE[x as usize];
+            }
+        }
+        pub(crate) fn init_natural_log_table() {
+            unsafe {
+                NATURAL_LOG_TABLE[0] = 1.0;
+                for i in 0..N_NATURAL_LOGS {
+                    NATURAL_LOG_TABLE[i] = (i as f32).log(2.71828182845);
+                }
+            }
+        }
+        #[inline(always)]
+        pub(crate) fn side_multiplier(side: Side) -> Score {
+            (1 - 2 * (side as i32)) as Score
+        }
+        #[inline(always)]
+        pub(crate) fn codingame_drawn(pos: &Position) -> f32 {
+            let diff =
+                (pos.bitboards[0].n_captured() as i16) - (pos.bitboards[1].n_captured() as i16);
+            return ((diff != 0) as i32 as f32) * (diff as f32).signum();
+        }
+    }
+    pub mod mcts {
+        use crate::engine::utils::*;
+        use crate::moves::*;
+        use rand::Rng;
+        use std::time::Instant;
+        type Value = f32;
+        type NodeIdx = u32;
+        const NULL_NODE_IDX: NodeIdx = std::u32::MAX;
+        pub struct MCTSResult {
+            pub best_move: Idx,
+            pub value: Value,
+        }
+        struct TreeNode {
+            position: Position,
+            children: Vec<NodeIdx>,
+            value: Value,
+            n: u32,
+        }
+        impl TreeNode {
+            fn new(pos: Position) -> TreeNode {
+                TreeNode {
+                    position: pos,
+                    children: Vec::new(),
+                    value: 1.0,
+                    n: 0,
+                }
+            }
+        }
+        pub struct MCTSWorker<R: Rng> {
+            all_nodes: Vec<TreeNode>,
+            my_side: Side,
+            my_side_mult: f32,
+            c: Value,
+            rng: R,
+        }
+        impl<R: Rng> MCTSWorker<R> {
+            pub fn new(pos: Position, c: Value, rng: R) -> MCTSWorker<R> {
+                let mut worker = MCTSWorker::<R> {
+                    all_nodes: Vec::new(),
+                    my_side: pos.to_move,
+                    my_side_mult: side_multiplier(pos.to_move),
+                    c: c,
+                    rng: rng,
+                };
+                let root = TreeNode::new(pos);
+                worker.all_nodes.push(root);
+                return worker;
+            }
+            pub fn go(&mut self, millis: u64) -> MCTSResult {
+                let now = Instant::now();
+                let mut n_rollouts = 0;
+                loop {
+                    if n_rollouts % 500 == 0 {
+                        if now.elapsed().as_millis() as u64 > millis - 10 {
+                            eprintln!("{} rollouts", n_rollouts);
+                            return self.get_best();
+                        }
+                    }
+                    self.treewalk(0);
+                    n_rollouts += 1;
+                }
+            }
+            fn treewalk(&mut self, idx: NodeIdx) -> Value {
+                let len = self.all_nodes.len();
+                let r: Value;
+                if self.all_nodes[idx as usize].children.len() == 0 {
+                    if self.all_nodes[idx as usize].n == 0 {
+                        r = self.rollout(self.all_nodes[idx as usize].position);
+                        let node = &mut self.all_nodes[idx as usize];
+                        node.n = 1;
+                        node.value = r;
+                        return r;
+                    } else {
+                        let node = &mut self.all_nodes[idx as usize];
+                        let pos = node.position;
+                        if node.position.is_won(node.position.to_move.other())
+                            || node.position.is_drawn()
+                        {
+                            node.n += 1;
+                            return node.value;
+                        }
+                        debug_assert!(node.n == 1);
+                        let moves = node.position.legal_moves();
+                        for i in 0..moves.size() {
+                            node.children.push((len + i) as u32);
+                        }
+                        for mov in moves {
+                            let mut newpos = pos;
+                            newpos.make_move(mov);
+                            self.all_nodes.push(TreeNode::new(newpos));
+                        }
+                        r = self.treewalk(len as u32);
+                    }
+                } else {
+                    let node = &self.all_nodes[idx as usize];
+                    let mut best_ucb: f32 = std::f32::NEG_INFINITY;
+                    let mut best_idx: u32 = NULL_NODE_IDX;
+                    let ln = natural_log(node.n);
+                    debug_assert!(ln != 0.0);
+                    for i in &node.children {
+                        let child = &self.all_nodes[*i as usize];
+                        let ucb = child.value * side_multiplier(node.position.to_move)
+                            + self.c * (ln / (child.n as Value)).sqrt();
+                        debug_assert!(!ucb.is_nan());
+                        if ucb > best_ucb {
+                            best_ucb = ucb;
+                            best_idx = *i;
+                        }
+                    }
+                    debug_assert!(best_idx != NULL_NODE_IDX);
+                    r = self.treewalk(best_idx);
+                }
+                let mut node = &mut self.all_nodes[idx as usize];
+                node.n += 1;
+                node.value = node.value + (r - node.value) / (node.n as Value);
+                return r;
+            }
+            fn rollout(&mut self, mut pos: Position) -> Value {
+                loop {
+                    if pos.is_won(pos.to_move.other()) {
+                        return (pos.to_move != Side::X) as i32 as Value;
+                    } else if pos.is_drawn() {
+                        let sign = codingame_drawn(&pos);
+                        return 0.5 + 0.5 * sign;
+                    }
+                    let moves = pos.legal_moves();
+                    let mov;
+                    let n_moves = moves.size();
+                    let j = self.rng.gen_range(0, n_moves);
+                    mov = moves.nth_move(j as u8);
+                    pos.make_move(mov);
+                }
+            }
+            fn get_best(&self) -> MCTSResult {
+                let mut best_move = NULL_IDX;
+                let mut best_score = std::f32::NEG_INFINITY;
+                let mut best_value = std::f32::NEG_INFINITY;
+                let mut i = 1;
+                for mov in self.all_nodes[0].position.legal_moves() {
+                    let child = &self.all_nodes[i as usize];
+                    let score = child.n as f32;
+                    if score > best_score {
+                        best_score = score;
+                        best_move = mov;
+                        best_value = child.value;
+                    }
+                    i += 1;
+                }
+                assert!(best_move != NULL_IDX);
+                return MCTSResult {
+                    best_move: best_move,
+                    value: best_value,
+                };
+            }
+            pub fn pv(&self) -> Vec<MCTSResult> {
+                let mut cur = 0;
+                let mut ret = Vec::new();
+                while self.all_nodes[cur].children.len() != 0 {
+                    let node = &self.all_nodes[cur];
+                    let mut best_move = NULL_IDX;
+                    let mut best_score = std::f32::NEG_INFINITY;
+                    let mut best_value = std::f32::NEG_INFINITY;
+                    let mut best_i = 0;
+                    let mut i = node.children[0];
+                    for mov in node.position.legal_moves() {
+                        let child = &self.all_nodes[i as usize];
+                        let score = child.n as f32;
+                        if score > best_score {
+                            best_score = score;
+                            best_move = mov;
+                            best_value = child.value;
+                            best_i = i;
+                        }
+                        i += 1;
+                    }
+                    cur = best_i as usize;
+                    assert!(best_move != NULL_IDX);
+                    ret.push(MCTSResult {
+                        best_move: best_move,
+                        value: best_value,
+                    });
+                }
+                return ret;
+            }
         }
     }
     use crate::engine::config::*;
     use crate::engine::eval::*;
+    use crate::engine::utils::*;
     use crate::moves::*;
     use std::fmt;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::Arc;
     use std::thread;
+    use std::thread::JoinHandle;
     use std::time::Duration;
     struct StopSearch;
     impl fmt::Debug for StopSearch {
@@ -698,7 +932,7 @@ pub mod engine {
         nodes_searched: u64,
     }
     impl SearchState {
-        fn new(alloc_millis: u64) -> SearchState {
+        fn new() -> SearchState {
             SearchState { nodes_searched: 0 }
         }
     }
@@ -706,6 +940,7 @@ pub mod engine {
         pub best_move: Idx,
         pub eval: Score,
     }
+    #[derive(Copy, Clone)]
     pub struct Manager {
         position: Position,
     }
@@ -713,23 +948,121 @@ pub mod engine {
         pub fn from_position(pos: Position) -> Manager {
             Manager { position: pos }
         }
+        fn search_fixed_time_inner(&self, stop_search: Arc<AtomicBool>) -> SearchResult {
+            let moves = self.position.legal_moves();
+            let n_moves = moves.size();
+            let till_parallel = std::cmp::min(n_moves / 2, 4);
+            let mut best = moves.any();
+            debug_assert!(best != NULL_IDX);
+            let mut best_score = SCORE_NEG_INF;
+            for depth in 4..=MAX_SEARCH_PLIES {
+                let mut moves_copy = moves;
+                {
+                    moves_copy.remove(best);
+                    let mut localpos = self.position;
+                    localpos.make_move(best);
+                    let localstop = Arc::clone(&stop_search);
+                    let worker = Worker::new(self.position, localstop);
+                    let result =
+                        worker.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score);
+                    let score = match result {
+                        Ok(sc) => -sc,
+                        Err(_) => {
+                            return SearchResult {
+                                eval: best_score,
+                                best_move: best,
+                            }
+                        }
+                    };
+                    if score > best_score {
+                        best_score = score;
+                    }
+                }
+                let mut move_idx = 1;
+                while move_idx < till_parallel {
+                    let mov = moves_copy.next().unwrap();
+                    let mut localpos = self.position;
+                    localpos.make_move(mov);
+                    let localstop = Arc::clone(&stop_search);
+                    let worker = Worker::new(self.position, localstop);
+                    let result =
+                        worker.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score);
+                    let score = match result {
+                        Ok(sc) => -sc,
+                        Err(_) => {
+                            return SearchResult {
+                                eval: best_score,
+                                best_move: best,
+                            }
+                        }
+                    };
+                    if score > best_score {
+                        best_score = score;
+                        best = mov;
+                    }
+                    move_idx += 1;
+                }
+                let mut handles = Vec::<JoinHandle<Result<Score, StopSearch>>>::new();
+                let mut rem_moves = Vec::<Idx>::new();
+                while move_idx < n_moves {
+                    let mov = moves_copy.next().unwrap();
+                    let mut localpos = self.position;
+                    localpos.make_move(mov);
+                    let localstop = Arc::clone(&stop_search);
+                    let handle = std::thread::spawn(move || {
+                        let worker = Worker::new(localpos, localstop);
+                        return worker.alpha_beta_dfs(
+                            depth - 1,
+                            localpos,
+                            SCORE_NEG_INF,
+                            -best_score,
+                        );
+                    });
+                    handles.push(handle);
+                    rem_moves.push(mov);
+                    move_idx += 1;
+                }
+                let mut i = 0;
+                let mut stop_now = false;
+                for handle in handles {
+                    let res = handle.join().unwrap();
+                    let mov = rem_moves[i];
+                    match res {
+                        Ok(score) => {
+                            let score = -score;
+                            if score > best_score {
+                                best_score = score;
+                                best = mov;
+                            }
+                        }
+                        Err(_) => {
+                            stop_now = true;
+                        }
+                    }
+                    i += 1;
+                }
+                if stop_now {
+                    break;
+                }
+                eprintln!("depth {}, best {}, eval {}", depth, best, best_score);
+            }
+            return SearchResult {
+                eval: best_score,
+                best_move: best,
+            };
+        }
         pub fn search_fixed_time(&self, alloc_millis: u64) -> SearchResult {
-            let (tx, rx) = mpsc::channel();
-            let localpos = self.position;
             let stop_search = Arc::new(AtomicBool::new(false));
-            let localstop = Arc::clone(&stop_search);
-            thread::spawn(move || {
-                let mut worker = Worker::new(localpos, tx.clone(), localstop);
-                worker.search_fixed_time(alloc_millis);
-            });
             assert!(alloc_millis > 30);
+            let localstop = Arc::clone(&stop_search);
+            let me = self.clone();
+            let handle = std::thread::spawn(move || {
+                return me.search_fixed_time_inner(localstop);
+            });
             thread::sleep(Duration::from_millis(alloc_millis - 25));
             stop_search.swap(true, Ordering::Relaxed);
-            if let Ok(res) = rx.recv() {
-                return res;
-            } else {
-                panic!("recv failed!");
-            }
+            let result = handle.join().unwrap();
+            return result;
         }
         pub fn search_free(&mut self, x_millis: u64, o_millis: u64) {
             let my_millis = match self.position.to_move {
@@ -755,127 +1088,33 @@ pub mod engine {
     struct Worker {
         position: Position,
         eval_fn: EvalFn,
-        tx: mpsc::Sender<SearchResult>,
         stop: Arc<AtomicBool>,
     }
     impl Worker {
-        pub fn new(pos: Position, tx: mpsc::Sender<SearchResult>, stop: Arc<AtomicBool>) -> Worker {
+        pub fn new(pos: Position, stop: Arc<AtomicBool>) -> Worker {
             Worker {
                 position: pos,
                 eval_fn: eval,
-                tx: tx,
                 stop: stop,
             }
         }
-        fn search_till_depth(&mut self, depth: u16) -> Score {
-            let mut state = SearchState::new(std::u64::MAX);
-            return self
-                .alpha_beta_dfs(
-                    depth,
-                    self.position,
-                    SCORE_NEG_INF,
-                    SCORE_POS_INF,
-                    &mut state,
-                )
-                .expect("This should not happen, since infinite time was allocated");
-        }
-        pub fn search_fixed_time(&mut self, alloc_millis: u64) {
-            let mut state = SearchState::new(alloc_millis);
-            let moves = self.position.legal_moves();
-            let mut t_moves = moves.clone();
-            let mut best = t_moves.next().expect("error: no legal moves");
-            let mut best_score = SCORE_NEG_INF;
-            for depth in 1..=MAX_SEARCH_PLIES {
-                let mut localmoves = moves.clone();
-                {
-                    let mut localpos = self.position.clone();
-                    localpos.make_move(best);
-                    let res = self.alpha_beta_dfs(
-                        depth - 1,
-                        localpos,
-                        SCORE_NEG_INF,
-                        SCORE_POS_INF,
-                        &mut state,
-                    );
-                    best_score = match res {
-                        Ok(s) => -s,
-                        Err(_e) => {
-                            eprintln!("NOTE: stopping at move 1");
-                            self.tx
-                                .send(SearchResult {
-                                    best_move: best,
-                                    eval: best_score,
-                                })
-                                .unwrap();
-                            return;
-                        }
-                    };
-                    localmoves.remove(best);
-                }
-                let mut move_idx = 1;
-                for mv in localmoves {
-                    move_idx += 1;
-                    let mut localpos = self.position.clone();
-                    localpos.make_move(mv);
-                    let res = self.alpha_beta_dfs(
-                        depth - 1,
-                        localpos,
-                        SCORE_NEG_INF,
-                        -best_score,
-                        &mut state,
-                    );
-                    let score = match res {
-                        Ok(s) => -s,
-                        Err(_e) => {
-                            eprintln!("NOTE: stopping at move {}", move_idx);
-                            self.tx
-                                .send(SearchResult {
-                                    best_move: best,
-                                    eval: best_score,
-                                })
-                                .unwrap();
-                            return;
-                        }
-                    };
-                    if score > best_score {
-                        best_score = score;
-                        best = mv;
-                    }
-                }
-                eprintln!("NOTE: depth {}/best {}/eval {}/", depth, best, best_score);
-            }
-            eprintln!("NOTE: stopping search since MAX_SEARCH_PLIES exceeded");
-            self.tx
-                .send(SearchResult {
-                    best_move: best,
-                    eval: best_score,
-                })
-                .unwrap();
+        fn search_till_depth(&self, depth: u16) -> Result<Score, StopSearch> {
+            return self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF);
         }
         fn alpha_beta_dfs(
-            &mut self,
+            &self,
             depth: u16,
             pos: Position,
             alpha: Score,
             beta: Score,
-            state: &mut SearchState,
         ) -> Result<Score, StopSearch> {
             debug_assert!(pos.assert());
             if pos.is_won(pos.to_move.other()) {
-                state.nodes_searched += 1;
                 return self.check_time(SCORE_LOSS);
             } else if pos.is_drawn() {
-                state.nodes_searched += 1;
-                let diff =
-                    pos.bitboards[0].n_captured() as i16 - pos.bitboards[1].n_captured() as i16;
-                if diff != 0 {
-                    let sign = (diff as f32).signum();
-                    return self.check_time(sign * side_multiplier(pos.to_move) * SCORE_WIN);
-                } else {
-                    return self.check_time(0.0);
-                }
+                let mult = codingame_drawn(&pos);
+                return self.check_time(mult * side_multiplier(pos.to_move) * SCORE_WIN);
             } else if depth == 0 {
-                state.nodes_searched += 1;
                 let f = self.eval_fn;
                 let my_1occ = self.position.get_1occ(self.position.to_move);
                 let their_1occ = self.position.get_1occ(self.position.to_move.other());
@@ -883,24 +1122,10 @@ pub mod engine {
             }
             let moves = pos.legal_moves();
             let mut alpha = alpha;
-            let my_1occ = pos.get_1occ(pos.to_move);
-            let captures = moves.intersect(my_1occ);
-            let moves = moves.subtract(captures);
-            for mov in captures {
-                let mut temp = pos.clone();
-                temp.make_move(mov);
-                let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
-                if score >= beta {
-                    return Ok(beta);
-                }
-                if score > alpha {
-                    alpha = score;
-                }
-            }
             for mov in moves {
                 let mut temp = pos.clone();
                 temp.make_move(mov);
-                let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
+                let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha)?;
                 if score >= beta {
                     return Ok(beta);
                 }
@@ -911,7 +1136,7 @@ pub mod engine {
             return Ok(alpha);
         }
         #[inline(always)]
-        fn check_time(&mut self, eval: Score) -> Result<Score, StopSearch> {
+        fn check_time(&self, eval: Score) -> Result<Score, StopSearch> {
             if self.stop.load(Ordering::Relaxed) {
                 return Err(StopSearch);
             }
@@ -919,10 +1144,10 @@ pub mod engine {
         }
         #[inline(always)]
         fn quiesce_search(
-            &mut self,
+            &self,
             pos: Position,
-            my_1occ: Moves,
-            their_1occ: Moves,
+            mut my_1occ: Moves,
+            mut their_1occ: Moves,
             eval_fn: EvalFn,
         ) -> Result<Score, StopSearch> {
             let captures = pos.legal_moves().intersect(my_1occ);
@@ -931,9 +1156,9 @@ pub mod engine {
                 for mov in captures {
                     let mut temp = pos.clone();
                     temp.make_move(mov);
-                    let my_1occ = self.position.get_1occ(self.position.to_move);
-                    let their_1occ = self.position.get_1occ(self.position.to_move.other());
-                    let score = -self.quiesce_search(temp, my_1occ, their_1occ, eval_fn)?;
+                    my_1occ.remove(mov);
+                    their_1occ.remove(mov);
+                    let score = -self.quiesce_search(temp, their_1occ, my_1occ, eval_fn)?;
                     if score > best {
                         best = score;
                     }
@@ -946,9 +1171,9 @@ pub mod engine {
     }
     pub fn init_engine() {
         init_block_score_table();
+        init_natural_log_table();
     }
 }
-use std::time::Instant;
 macro_rules! parse_input {
     ( $ x : expr , $ t : ident ) => {
         $x.trim().parse::<$t>().unwrap()
@@ -981,13 +1206,19 @@ fn main() {
             pos.make_move(index as u8);
         }
         let now = Instant::now();
-        let manager = Manager::from_position(pos);
-        let res = manager.search_fixed_time(100);
-        let elapsed = now.elapsed();
+        let rng = SmallRng::seed_from_u64(12345);
+        let mut mcts = MCTSWorker::new(pos, 1.4, rng);
+        let res = mcts.go(100);
         let idx = res.best_move;
+        let eval = res.value;
+        let elapsed = now.elapsed();
+        eprintln!("actual elapsed: {} ms", elapsed.as_millis());
         let col = ((idx / 9) % 3) * 3 + (idx % 3);
         let row = ((idx / 9) / 3) * 3 + (idx % 9) / 3;
         pos.make_move(idx);
-        println!("{} {} {}", row, col, res.eval,);
+        println!("{} {} {}", row, col, eval,);
+        for e in mcts.pv() {
+            eprintln!("move {}; value {}", e.best_move, e.value);
+        }
     }
 }

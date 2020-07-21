@@ -1,15 +1,18 @@
 pub mod config;
 pub mod eval;
 pub mod utils;
+pub mod mcts;
 
 use std::time::{Duration};
 use std::thread;
-use std::sync::{mpsc, Arc};
+use std::thread::JoinHandle;
+use std::sync::{Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::fmt;
 
 use crate::engine::config::*;
 use crate::engine::eval::*;
+use crate::engine::utils::*;
 use crate::moves::*;
 
 // used to break out of recursion
@@ -28,7 +31,7 @@ struct SearchState {
 }
 
 impl SearchState {
-    fn new(alloc_millis : u64) -> SearchState {
+    fn new() -> SearchState {
         SearchState {
             nodes_searched: 0,
         }
@@ -40,6 +43,7 @@ pub struct SearchResult {
     pub eval: Score,
 }
 
+#[derive(Copy, Clone)]
 pub struct Manager {
     position: Position,
 }
@@ -53,34 +57,136 @@ impl Manager {
         }
     }
 
+    fn search_fixed_time_inner(&self, stop_search: Arc<AtomicBool>) -> SearchResult {
+        let moves = self.position.legal_moves();
+        let n_moves = moves.size();
+        // moves to explore before going parellel
+        let till_parallel = std::cmp::min(n_moves / 2, 4);
+
+        let mut best = moves.any();
+        debug_assert!(best != NULL_IDX);
+        let mut best_score = SCORE_NEG_INF;
+
+        for depth in 4..=MAX_SEARCH_PLIES {
+            let mut moves_copy = moves;
+            // search last best move first
+            {
+                moves_copy.remove(best);
+
+                let mut localpos = self.position;
+                localpos.make_move(best);
+                let localstop = Arc::clone(&stop_search);
+                let worker = Worker::new(self.position, localstop);
+                let result = worker.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score);
+                let score = match result {
+                    Ok(sc) => -sc,
+                    Err(_) => return SearchResult {
+                        eval: best_score,
+                        best_move: best,
+                    }
+                };
+                if score > best_score {
+                    best_score = score;
+                    // don't need to update best
+                }
+            }
+
+            let mut move_idx = 1;  // already explored one move
+            while move_idx < till_parallel {
+                let mov = moves_copy.next().unwrap();
+                let mut localpos = self.position;
+                localpos.make_move(mov);
+
+                let localstop = Arc::clone(&stop_search);
+                let worker = Worker::new(self.position, localstop);
+                let result = worker.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score);
+                let score = match result {
+                    Ok(sc) => -sc,
+                    Err(_) => return SearchResult {
+                        eval: best_score,
+                        best_move: best,
+                    }
+                };
+                if score > best_score {
+                    best_score = score;
+                    best = mov;
+                }
+                move_idx += 1;
+            }
+
+            let mut handles = Vec::<JoinHandle<Result<Score, StopSearch>>>::new();
+            let mut rem_moves = Vec::<Idx>::new();
+
+            // search the remaining moves in parallel
+            while move_idx < n_moves {
+                let mov = moves_copy.next().unwrap();
+                let mut localpos = self.position;
+                localpos.make_move(mov);
+
+                let localstop = Arc::clone(&stop_search);
+                let handle = std::thread::spawn(move || {
+                    let worker = Worker::new(localpos, localstop);
+                    return worker.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score);
+                });
+                handles.push(handle);
+
+                rem_moves.push(mov);
+                move_idx += 1;
+            }
+
+            let mut i = 0;
+            let mut stop_now = false;
+            for handle in handles {
+                let res = handle.join().unwrap();
+                let mov = rem_moves[i];
+                match res {
+                    Ok(score) => {
+                        let score = -score;
+                        if score > best_score {
+                            best_score = score;
+                            best = mov;
+                        }
+                    },
+                    Err(_) => {
+                        stop_now = true;
+                    },
+                }
+                i += 1;
+            }
+            if stop_now {
+                break;
+            }
+            eprintln!("depth {}, best {}, eval {}", depth, best, best_score);
+        }
+        return SearchResult{
+            eval: best_score,
+            best_move: best,
+        };
+    }
+
     pub fn search_fixed_time(&self, alloc_millis: u64) -> SearchResult {
-        let (tx, rx) = mpsc::channel();
-        let localpos = self.position;
-
+        // flag to stop search
         let stop_search = Arc::new(AtomicBool::new(false));
-        let localstop = Arc::clone(&stop_search);
-
-        thread::spawn(move || {
-            let mut worker = Worker::new(localpos, tx.clone(), localstop);
-            worker.search_fixed_time(alloc_millis);
-        });
 
         // expect something reasonable
         assert!(alloc_millis > 30);
 
+        let localstop = Arc::clone(&stop_search);
+        // HACK. perhaps better is have a function that is not a member of Manager
+        // but instead takes a position
+        let me = self.clone();
+        let handle = std::thread::spawn(move || {
+            return me.search_fixed_time_inner(localstop);
+        });
+
+        // wait
         thread::sleep(Duration::from_millis(alloc_millis - 25));
 
         // tell threads to stop
         stop_search.swap(true, Ordering::Relaxed);
-
-        // TODO use recv_deadline and if timed out return last updated result
-        if let Ok(res) = rx.recv() {
-            return res;
-        } else {
-            panic!("recv failed!");
-        }
-
-        // the thread should unwrap the recursions and exit shortly after
+        
+        let result = handle.join().unwrap();
+        return result;
     }
     
     pub fn search_free(&mut self, x_millis: u64, o_millis: u64) {
@@ -118,100 +224,23 @@ impl Manager {
 struct Worker {
     position: Position,
     eval_fn: EvalFn,
-    tx: mpsc::Sender<SearchResult>,
     stop: Arc<AtomicBool>,
 }
 
 impl Worker {
     // note: takes ownership of tx and stop, so need to make clone
-    pub fn new(pos: Position, tx: mpsc::Sender<SearchResult>, stop: Arc<AtomicBool>) -> Worker {
+    pub fn new(pos: Position, stop: Arc<AtomicBool>) -> Worker {
         Worker {
             position: pos,
             eval_fn: eval, // default to eval; might change later
-            tx: tx,
             stop: stop,
         }
     }
 
     // TODO implement this with threads
-    fn search_till_depth(&mut self, depth: u16) -> Score {
-        let mut state = SearchState::new(std::u64::MAX);
+    fn search_till_depth(&self, depth: u16) -> Result<Score, StopSearch> {
         // no need for clone since self.position is implicitly copied
-        return self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF, &mut state)
-            .expect("This should not happen, since infinite time was allocated");
-    }
-
-    // TODO implement this in manager
-    pub fn search_fixed_time(&mut self, alloc_millis: u64) {
-        let mut state = SearchState::new(alloc_millis);
-
-        let moves = self.position.legal_moves();
-
-        let mut t_moves = moves.clone();
-        let mut best = t_moves.next().expect("error: no legal moves");
-        let mut best_score = SCORE_NEG_INF;
-
-        for depth in 1..=MAX_SEARCH_PLIES {
-            let mut localmoves = moves.clone();
-
-            // search last best move first
-            {
-                let mut localpos = self.position.clone();
-                localpos.make_move(best);
-                let res = self.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, SCORE_POS_INF, &mut state);
-                best_score = match res {
-                    Ok(s) => -s,
-                    Err(_e) => {
-                        eprintln!("NOTE: stopping at move 1");
-                        self.tx.send(SearchResult{
-                            best_move: best,
-                            eval: best_score,
-                        }).unwrap();
-                        return;
-                    },  // need to stop search
-                };
-                localmoves.remove(best);
-            }
-
-            let mut move_idx = 1;
-
-            // search the remaining moves
-            for mv in localmoves {
-                move_idx += 1;
-                let mut localpos = self.position.clone();
-                localpos.make_move(mv);
-                // note that best_score acts as alpha here TODO is this right?
-                let res = self.alpha_beta_dfs(depth - 1, localpos, SCORE_NEG_INF, -best_score, &mut state);
-                let score = match res {
-                    Ok(s) => -s,
-                    Err(_e) => {
-                        eprintln!("NOTE: stopping at move {}", move_idx);
-                        // timeout
-                        self.tx.send(SearchResult{
-                            best_move: best,
-                            eval: best_score,
-                        }).unwrap();
-                        return;
-                    },
-                };
-                if score > best_score {
-                    best_score = score;
-                    best = mv;
-                }
-            }
-            eprintln!("NOTE: depth {}/best {}/eval {}/", depth, best, best_score);
-        }
-
-        eprintln!("NOTE: stopping search since MAX_SEARCH_PLIES exceeded");
-        self.tx.send(SearchResult{
-            best_move: best,
-            eval: best_score,
-        }).unwrap();
-        // self.sender.send(SearchInfo::Update{
-        //     best_move: best,
-        //     eval: best_score,
-        // }).unwrap();
-        // self.sender.send(SearchInfo::Terminate).unwrap();
+        return self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF);
     }
 
     /*
@@ -223,7 +252,7 @@ impl Worker {
 
     // alpha-beta negamax search using DFS
     // TODO return SearchResult instead
-    fn alpha_beta_dfs(&mut self, depth: u16, pos: Position, alpha: Score, beta: Score, state: &mut SearchState) -> Result<Score, StopSearch> {
+    fn alpha_beta_dfs(&self, depth: u16, pos: Position, alpha: Score, beta: Score) -> Result<Score, StopSearch> {
         debug_assert!(pos.assert());
 
         // this move has won -- it's terrible for the current side
@@ -231,23 +260,16 @@ impl Worker {
         // one call to is_won() is made
         // TODO do we need to check for this? would alpha-beta take care of this
         if pos.is_won(pos.to_move.other()) {
-            state.nodes_searched += 1;
+            //state.nodes_searched += 1;
             return self.check_time(SCORE_LOSS);
         } else if pos.is_drawn() {
-            state.nodes_searched += 1;
+            //state.nodes_searched += 1;
             // NOTE that one side could still be considered won in some rulesets by comparing
             // the total number of blocks occupied
-            let diff = pos.bitboards[0].n_captured() as i16 - pos.bitboards[1].n_captured() as i16;
-            if diff != 0 {
-                let sign = (diff as f32).signum();
-                // e.g. if sign is positive and side is X then it's very good.
-                return self.check_time(sign * side_multiplier(pos.to_move) * SCORE_WIN);
-            } else {
-                // actually dead drawn
-                return self.check_time(0.0);
-            }
+            let mult = codingame_drawn(&pos);
+            return self.check_time(mult * side_multiplier(pos.to_move) * SCORE_WIN);
         } else if depth == 0 {
-            state.nodes_searched += 1;
+            //state.nodes_searched += 1;
             let f = self.eval_fn;
             let my_1occ = self.position.get_1occ(self.position.to_move);
             let their_1occ = self.position.get_1occ(self.position.to_move.other());
@@ -262,6 +284,7 @@ impl Worker {
             let indices = (0..DROP_CUTOFF).collect::<Vec<_>>();
             
         }*/
+        /*
         let my_1occ = pos.get_1occ(pos.to_move);
         let captures = moves.intersect(my_1occ);
         let moves = moves.subtract(captures);
@@ -276,11 +299,12 @@ impl Worker {
                 alpha = score;
             }
         }
+        */
 
         for mov in moves {
             let mut temp = pos.clone();
             temp.make_move(mov);
-            let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha, state)?;
+            let score = -self.alpha_beta_dfs(depth - 1, temp, -beta, -alpha)?;
             if score >= beta {
                 return Ok(beta);
             }
@@ -294,7 +318,7 @@ impl Worker {
     // called when a leaf node is reached. If timed out, return Err(StopSearch). Otherwise
     // return the given eval wrapped in Result
     #[inline(always)]
-    fn check_time(&mut self, eval: Score) -> Result<Score, StopSearch> {
+    fn check_time(&self, eval: Score) -> Result<Score, StopSearch> {
         if self.stop.load(Ordering::Relaxed) {
             return Err(StopSearch);
         }
@@ -304,7 +328,7 @@ impl Worker {
     // my_1occ is the occupancy of moves I can make to capture a block.
     // alpha/beta is not used for now since the search space is assumed to be small
     #[inline(always)]
-    fn quiesce_search(&mut self, pos: Position, my_1occ: Moves, their_1occ: Moves, eval_fn: EvalFn) -> Result<Score, StopSearch> {
+    fn quiesce_search(&self, pos: Position, mut my_1occ: Moves, mut their_1occ: Moves, eval_fn: EvalFn) -> Result<Score, StopSearch> {
         let captures = pos.legal_moves().intersect(my_1occ);
         if captures.size() != 0 {
             let mut best = SCORE_NEG_INF;
@@ -312,9 +336,9 @@ impl Worker {
                 let mut temp = pos.clone();
                 temp.make_move(mov);
 
-                let my_1occ = self.position.get_1occ(self.position.to_move);
-                let their_1occ = self.position.get_1occ(self.position.to_move.other());
-                let score = -self.quiesce_search(temp, my_1occ, their_1occ, eval_fn)?;
+                my_1occ.remove(mov);
+                their_1occ.remove(mov);
+                let score = -self.quiesce_search(temp, their_1occ, my_1occ, eval_fn)?;
                 if score > best {
                     best = score;
                 }
@@ -328,6 +352,7 @@ impl Worker {
 
 pub fn init_engine() {
     init_block_score_table();
+    init_natural_log_table();
 }
 
 /*
