@@ -431,26 +431,26 @@ impl Position {
         let mut ret = Moves(0);
         // iterate over blocks. TODO should implement an iter() function if
         // this is used more than once
-        let mut my_occ = self.bitboards[side as usize].0;
-        let mut their_occ = self.bitboards[side as usize].0;
+        let my_occ = self.bitboards[side as usize].0;
+        let their_occ = self.bitboards[side.other() as usize].0;
+        let mut shift = 0;
         // when my_occ is 0 there's def no chance that there's any more captures
-        while my_occ != 0 {
-            let my_block = my_occ & BLOCK_OCC as u128;
-            let their_block = their_occ & BLOCK_OCC as u128;
+        while shift != 81 {
+            let my_block = (my_occ >> shift) & BLOCK_OCC as u128;
+            let their_block = (their_occ >> shift) & BLOCK_OCC as u128;
 
             let bstate = get_block_state(my_block as B33, their_block as B33);
             if bstate.min_needed() == 1 {
                 // possible captures. Find them all.
-                let block_moves = Moves(my_block);
+                let block_moves = Moves(!my_block & BLOCK_OCC as u128);
                 for mov in block_moves {
                     // this move is what we're looking for
                     if get_block_won((my_block | (1 << mov)) as B33) {
-                        ret.add(mov);
+                        ret.add(mov + shift as Idx);
                     }
                 }
             }
-            my_occ >>= 9;
-            their_occ >>= 9;
+            shift += 9;
         }
         return ret;
     }
@@ -532,4 +532,3 @@ mod tests {
         assert!(!get_block_won(0b000000000));
     }
 }
-

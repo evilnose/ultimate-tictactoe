@@ -312,22 +312,22 @@ pub mod moves {
         #[inline]
         pub fn get_1occ(&self, side: Side) -> Moves {
             let mut ret = Moves(0);
-            let mut my_occ = self.bitboards[side as usize].0;
-            let mut their_occ = self.bitboards[side as usize].0;
-            while my_occ != 0 {
-                let my_block = my_occ & BLOCK_OCC as u128;
-                let their_block = their_occ & BLOCK_OCC as u128;
+            let my_occ = self.bitboards[side as usize].0;
+            let their_occ = self.bitboards[side.other() as usize].0;
+            let mut shift = 0;
+            while shift != 81 {
+                let my_block = (my_occ >> shift) & BLOCK_OCC as u128;
+                let their_block = (their_occ >> shift) & BLOCK_OCC as u128;
                 let bstate = get_block_state(my_block as B33, their_block as B33);
                 if bstate.min_needed() == 1 {
-                    let block_moves = Moves(my_block);
+                    let block_moves = Moves(!my_block & BLOCK_OCC as u128);
                     for mov in block_moves {
                         if get_block_won((my_block | (1 << mov)) as B33) {
-                            ret.add(mov);
+                            ret.add(mov + shift as Idx);
                         }
                     }
                 }
-                my_occ >>= 9;
-                their_occ >>= 9;
+                shift += 9;
             }
             return ret;
         }
@@ -700,6 +700,9 @@ pub mod engine {
         }
         #[inline(always)]
         pub fn natural_log(x: u32) -> f32 {
+            if x >= N_NATURAL_LOGS as u32 {
+                return (x as f32).log(2.71828182845);
+            }
             unsafe {
                 return NATURAL_LOG_TABLE[x as usize];
             }
@@ -849,10 +852,9 @@ pub mod engine {
                         return 0.5 + 0.5 * sign;
                     }
                     let moves = pos.legal_moves();
-                    let mov;
                     let n_moves = moves.size();
                     let j = self.rng.gen_range(0, n_moves);
-                    mov = moves.nth_move(j as u8);
+                    let mov = moves.nth_move(j as u8);
                     pos.make_move(mov);
                 }
             }
@@ -1206,8 +1208,8 @@ fn main() {
             pos.make_move(index as u8);
         }
         let now = Instant::now();
-        let rng = SmallRng::seed_from_u64(12345);
-        let mut mcts = MCTSWorker::new(pos, 1.4, rng);
+        let rng = SmallRng::from_entropy();
+        let mut mcts = MCTSWorker::new(pos, 0.85, rng);
         let res = mcts.go(100);
         let idx = res.best_move;
         let eval = res.value;

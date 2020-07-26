@@ -49,9 +49,9 @@ fn main() {
         //let manager = Manager::from_position(pos);
         //let res = manager.search_fixed_time(100);
         //let idx = res.best_move;
-        let rng = SmallRng::seed_from_u64(12345);
-        //let rng = SmallRng::from_entropy();
-        let mut mcts = MCTSWorker::new(pos, 1.3, rng);
+        //let rng = SmallRng::seed_from_u64(12345);
+        let rng = SmallRng::from_entropy();
+        let mut mcts = MCTSWorker::new(pos, 0.85, rng);
         let res = mcts.go(100);
         let idx = res.best_move;
         let eval = res.value;

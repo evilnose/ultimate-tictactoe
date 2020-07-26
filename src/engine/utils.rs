@@ -48,6 +48,9 @@ pub fn random_bits(n: u8) -> u128 {
 #[inline(always)]
 pub fn natural_log(x: u32) -> f32 {
     // TODO optimize. search "fast natural log"
+    if x >= N_NATURAL_LOGS as u32 {
+        return (x as f32).log(2.71828182845);
+    }
     unsafe {
         return NATURAL_LOG_TABLE[x as usize];
     }

@@ -12,12 +12,6 @@ pub struct MCTSResult {
     pub value: Value,
 }
 
-// n represents the number of times over which the value is averaged,
-// i.e. the "confidence" of the value
-struct ValueInfo {
-    value: Value,
-    n: u32,
-}
 
 // a Monte-Carlo Tree Node
 struct TreeNode {
@@ -163,11 +157,11 @@ impl<R: Rng> MCTSWorker<R> {
                 let sign = codingame_drawn(&pos);
                 return 0.5 + 0.5 * sign;
             }
+            
             let moves = pos.legal_moves();
-            let mov;
             let n_moves = moves.size();
             let j = self.rng.gen_range(0, n_moves);
-            mov = moves.nth_move(j as u8);
+            let mov = moves.nth_move(j as u8);
 
             pos.make_move(mov);
         }
