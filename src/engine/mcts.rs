@@ -1,7 +1,7 @@
-use std::time::Instant;
-use crate::moves::*;
 use crate::engine::utils::*;
+use crate::moves::*;
 use rand::Rng;
+use std::time::Instant;
 
 type Value = f32;
 type NodeIdx = u32;
@@ -12,13 +12,12 @@ pub struct MCTSResult {
     pub value: Value,
 }
 
-
 // a Monte-Carlo Tree Node
 struct TreeNode {
     position: Position,
     children: Vec<NodeIdx>,
     value: Value,
-    n: u32,  // number of times visited this node
+    n: u32, // number of times visited this node
 }
 
 impl TreeNode {
@@ -26,7 +25,7 @@ impl TreeNode {
         TreeNode {
             position: pos,
             children: Vec::new(),
-            value: 1.0,  // anything but zero works
+            value: 1.0, // anything but zero works
             n: 0,
         }
     }
@@ -37,7 +36,7 @@ pub struct MCTSWorker<R: Rng> {
     all_nodes: Vec<TreeNode>,
     my_side: Side,
     my_side_mult: f32,
-    c: Value,  // C parameter
+    c: Value, // C parameter
     rng: R,
 }
 
@@ -70,94 +69,90 @@ impl<R: Rng> MCTSWorker<R> {
         }
     }
 
-    fn treewalk(&mut self, idx: NodeIdx) -> Value {
+    fn treewalk(&mut self, mut idx: NodeIdx) {
         let len = self.all_nodes.len();
+        let mut explored_nodes = Vec::new();
         let r: Value;
-        // leaf node
-        if self.all_nodes[idx as usize].children.len() == 0 {
-            if self.all_nodes[idx as usize].n == 0 {
-                // never sampled before; rollout immediately
-                r = self.rollout(self.all_nodes[idx as usize].position);
-
-                // manually set n and value since this is the first time
-                let node = &mut self.all_nodes[idx as usize];
-                node.n = 1;
-                node.value = r;
-                return r;
-            } else {
-                /* begin mut borrow of node */
-                let node = &mut self.all_nodes[idx as usize];
-                let pos = node.position;
-
-                if node.position.is_won(node.position.to_move.other()) || node.position.is_drawn() {
-                    // early end
-                    node.n += 1;
-                    return node.value;
-                }
-
-                debug_assert!(node.n == 1);
-                // expand
-                let moves = node.position.legal_moves();
-                for i in 0..moves.size() {
-                    node.children.push((len + i) as u32);
-                }
-                /* end mut borrow of node */
-
-                for mov in moves {
-                    let mut newpos = pos;
-                    newpos.make_move(mov);
-                    self.all_nodes.push(TreeNode::new(newpos));
-                }
-                r = self.treewalk(len as u32);
-            }
-        } else {
+        loop {
+            explored_nodes.push(idx);
             let node = &self.all_nodes[idx as usize];
+            let localpos = node.position;
+            if node.children.len() == 0 {
+                // is leaf node
+                if node.n == 0 {
+                    // never sampled before; rollout now
+                    /* mutable borrow of self and node ends here */
+                    r = self.rollout(localpos);
+                    break;
+                } else {
+                    /* begin mut borrow of node */
+                    if localpos.is_won(localpos.to_move.other()) ||
+                        localpos.is_drawn() {
+                        // early end; since game is already over we can directly take its value
+                        r = node.value;
+                        break;
+                    }
 
-            // find best child
-            let mut best_ucb: f32 = std::f32::NEG_INFINITY;
-            let mut best_idx: u32 = NULL_NODE_IDX;
+                    debug_assert!(node.n == 1);
+                    /* do mutable borrow here since need to modify children */
+                    let node = &mut self.all_nodes[idx as usize];
+                    // expand
+                    let moves = localpos.legal_moves();
+                    for i in 0..moves.size() {
+                        node.children.push((len + i) as NodeIdx);
+                    }
+                    /* end mut borrow of node */
 
-            let ln = natural_log(node.n);
-            debug_assert!(ln != 0.0);
-            //let c = 1.4 / 9.0 * node.children.len() as f32;
-            for i in &node.children {
-                let child = &self.all_nodes[*i as usize];
-                let ucb = child.value * side_multiplier(node.position.to_move) + self.c * (ln / (child.n as Value)).sqrt();
-                debug_assert!(!ucb.is_nan());
-                if ucb > best_ucb {
-                    best_ucb = ucb;
-                    best_idx = *i;
+                    for mov in moves {
+                        let mut newpos = localpos;
+                        newpos.make_move(mov);
+                        self.all_nodes.push(TreeNode::new(newpos));
+                    }
+                    idx = len as NodeIdx;
                 }
+            } else {
+                // find best child
+                let mut best_ucb: f32 = std::f32::NEG_INFINITY;
+                let mut best_idx: u32 = NULL_NODE_IDX;
+
+                let ln = natural_log(node.n);
+                debug_assert!(ln != 0.0);
+                //let c = 1.4 / 9.0 * node.children.len() as f32;
+                for i in &node.children {
+                    let child = &self.all_nodes[*i as usize];
+                    let ucb = child.value * side_multiplier(node.position.to_move)
+                        + self.c * (ln / (child.n as Value)).sqrt();
+                    debug_assert!(!ucb.is_nan());
+                    if ucb > best_ucb {
+                        best_ucb = ucb;
+                        best_idx = *i;
+                    }
+                }
+                debug_assert!(best_idx != NULL_NODE_IDX);
+
+                idx = best_idx as NodeIdx;
             }
-            debug_assert!(best_idx != NULL_NODE_IDX);
-
-            r = self.treewalk(best_idx);
         }
+        self.backpropagate(r, explored_nodes);
+    }
 
-        /* last mut borrow of node */
-        let mut node = &mut self.all_nodes[idx as usize];
-        node.n += 1;
-        /* propagate; trust me, the algebra worked out */
-        node.value = node.value + (r - node.value) / (node.n as Value);
-        return r;
+    fn backpropagate(&mut self, r: Value, explored_nodes: Vec<u32>) {
+        for idx in explored_nodes {
+            let mut node = &mut self.all_nodes[idx as usize];
+            // UCT
+            node.n += 1;
+            node.value = node.value + (r - node.value) / (node.n as Value);
+        }
     }
 
     fn rollout(&mut self, mut pos: Position) -> Value {
         loop {
             if pos.is_won(pos.to_move.other()) {
-                /*
-                if pos.to_move == self.my_side {
-                    return 0.0;
-                } else {
-                    return 1.0;
-                }
-                */
                 return (pos.to_move != Side::X) as i32 as Value;
             } else if pos.is_drawn() {
                 let sign = codingame_drawn(&pos);
                 return 0.5 + 0.5 * sign;
             }
-            
             let moves = pos.legal_moves();
             let n_moves = moves.size();
             let j = self.rng.gen_range(0, n_moves);
