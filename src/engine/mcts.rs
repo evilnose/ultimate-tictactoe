@@ -15,18 +15,38 @@ pub struct MCTSResult {
 // a Monte-Carlo Tree Node
 struct TreeNode {
     position: Position,
+    moves: Moves,
     children: Vec<NodeIdx>,
+    n: u32,  // number of times visited this node
     value: Value,
-    n: u32, // number of times visited this node
+    rn: u32,  // RAVE n
+    rvalue: Value,  // RAVE value
 }
 
 impl TreeNode {
     fn new(pos: Position) -> TreeNode {
         TreeNode {
             position: pos,
+            moves: Moves::new(),
             children: Vec::new(),
-            value: 1.0, // anything but zero works
             n: 0,
+            // anything but zero works, since this is overwritten the first time avg is computed
+            value: 1.0, 
+            rn: 0,
+            rvalue: 1.0,
+        }
+    }
+
+    // return a seeded TreeNode, i.e. with pre-computed values and n, rn as confidence.
+    fn from_heuristic(pos: Position) -> TreeNode {
+        TreeNode {
+            position: pos,
+            moves: Moves::new(),
+            children: Vec::new(),
+            n: 1,
+            value: 0.5,
+            rn: 1,
+            rvalue: 0.5
         }
     }
 }
@@ -34,8 +54,6 @@ impl TreeNode {
 /* TODO */
 pub struct MCTSWorker<R: Rng> {
     all_nodes: Vec<TreeNode>,
-    my_side: Side,
-    my_side_mult: f32,
     c: Value, // C parameter
     rng: R,
 }
@@ -44,8 +62,6 @@ impl<R: Rng> MCTSWorker<R> {
     pub fn new(pos: Position, c: Value, rng: R) -> MCTSWorker<R> {
         let mut worker = MCTSWorker::<R> {
             all_nodes: Vec::new(),
-            my_side: pos.to_move,
-            my_side_mult: side_multiplier(pos.to_move),
             c: c,
             rng: rng,
         };
@@ -70,82 +86,126 @@ impl<R: Rng> MCTSWorker<R> {
     }
 
     fn treewalk(&mut self, mut idx: NodeIdx) {
-        let len = self.all_nodes.len();
         let mut explored_nodes = Vec::new();
-        let r: Value;
+        let mut explored_moves = Vec::new();
         loop {
-            explored_nodes.push(idx);
+            let len = self.all_nodes.len();
             let node = &self.all_nodes[idx as usize];
             let localpos = node.position;
             if node.children.len() == 0 {
                 // is leaf node
-                if node.n == 0 {
-                    // never sampled before; rollout now
-                    /* mutable borrow of self and node ends here */
-                    r = self.rollout(localpos);
+                /* begin mut borrow of node */
+                if localpos.is_won(localpos.to_move.other()) || localpos.is_drawn() {
+                    // early end; since game is already over we can directly take its value
                     break;
-                } else {
-                    /* begin mut borrow of node */
-                    if localpos.is_won(localpos.to_move.other()) ||
-                        localpos.is_drawn() {
-                        // early end; since game is already over we can directly take its value
-                        r = node.value;
-                        break;
-                    }
-
-                    debug_assert!(node.n == 1);
-                    /* do mutable borrow here since need to modify children */
-                    let node = &mut self.all_nodes[idx as usize];
-                    // expand
-                    let moves = localpos.legal_moves();
-                    for i in 0..moves.size() {
-                        node.children.push((len + i) as NodeIdx);
-                    }
-                    /* end mut borrow of node */
-
-                    for mov in moves {
-                        let mut newpos = localpos;
-                        newpos.make_move(mov);
-                        self.all_nodes.push(TreeNode::new(newpos));
-                    }
-                    idx = len as NodeIdx;
                 }
+                explored_nodes.push(idx);
+
+                /* do mutable borrow here since need to modify children */
+                let node = &mut self.all_nodes[idx as usize];
+                // expand
+                let moves = localpos.legal_moves();
+                for i in 0..moves.size() {
+                    node.children.push((len + i) as NodeIdx);
+                }
+                /* end mut borrow of node */
+
+                for mov in moves {
+                    let mut newpos = localpos;
+                    newpos.make_move(mov);
+                    self.all_nodes.push(TreeNode::from_heuristic(newpos));
+                }
+                /* re-borrow nodes to set moves */
+                let node = &mut self.all_nodes[idx as usize];
+                node.moves = moves;
+
+                // push first move
+                explored_moves.push(moves.peek());
+                break;
             } else {
+                explored_nodes.push(idx);
                 // find best child
-                let mut best_ucb: f32 = std::f32::NEG_INFINITY;
-                let mut best_idx: u32 = NULL_NODE_IDX;
-
-                let ln = natural_log(node.n);
-                debug_assert!(ln != 0.0);
-                //let c = 1.4 / 9.0 * node.children.len() as f32;
-                for i in &node.children {
-                    let child = &self.all_nodes[*i as usize];
-                    let ucb = child.value * side_multiplier(node.position.to_move)
-                        + self.c * (ln / (child.n as Value)).sqrt();
-                    debug_assert!(!ucb.is_nan());
-                    if ucb > best_ucb {
-                        best_ucb = ucb;
-                        best_idx = *i;
-                    }
-                }
-                debug_assert!(best_idx != NULL_NODE_IDX);
-
-                idx = best_idx as NodeIdx;
+                let best_idx = self.select_move(node, self.c);
+                idx = node.children[best_idx] as NodeIdx;
+                explored_moves.push(node.moves.nth_move(best_idx as u8));
             }
         }
-        self.backpropagate(r, explored_nodes);
+        assert_eq!(explored_moves.len(), explored_nodes.len());
+        let localpos = (&self.all_nodes[idx as usize]).position;
+        let r = self.rollout(localpos, &mut explored_moves);
+        self.backpropagate(r, explored_nodes, explored_moves);
     }
 
-    fn backpropagate(&mut self, r: Value, explored_nodes: Vec<u32>) {
-        for idx in explored_nodes {
-            let mut node = &mut self.all_nodes[idx as usize];
-            // UCT
-            node.n += 1;
-            node.value = node.value + (r - node.value) / (node.n as Value);
+    // returns the best move index and the corresponding node index
+    fn select_move(&self, node: &TreeNode, c: f32) -> usize {
+        let mut best_eval: f32 = std::f32::NEG_INFINITY;
+        let mut best_idx: usize = 300;
+
+        let b = 0.1;
+        
+        for i in 0..node.children.len() {
+            let child = &self.all_nodes[node.children[i] as usize];
+            let n = child.n as f32;
+            let rn = child.rn as f32;
+            let beta = rn / (n + rn + 4.0 * n * rn * b * b);
+            let mult = side_multiplier(child.position.to_move); // TODO move this outside the loop
+            let eval = ((1.0 - beta) * child.value + beta * child.rvalue) * mult;
+            debug_assert!(!eval.is_nan());
+            if eval > best_eval {
+                best_eval = eval;
+                best_idx = i;
+            }
+        }
+        debug_assert!(best_idx != 300);
+        return best_idx;
+    }
+
+    /**
+     * Note that explored_nodes contains nodes in treewalk() whereas explored_moves not only
+     * contains moves explored in treewalk() but also those in rollout()
+     */
+    fn backpropagate(&mut self, r: Value, explored_nodes: Vec<u32>, explored_moves: Vec<Idx>) {
+        debug_assert!(explored_nodes.len() <= explored_moves.len());
+        for i in 0..explored_nodes.len() {
+            let next_idx;
+            let moves: Moves;
+            {
+                let node = &self.all_nodes[explored_nodes[i] as usize];
+                moves = node.moves;
+                // UCT
+                let a = explored_moves[i];
+                // the next node according to explored_moves
+                debug_assert!(node.moves.size() != 0);
+                next_idx = node.children[node.moves.move_number(a) as usize] as usize;
+            }
+            {
+                let mut next = &mut self.all_nodes[next_idx];
+                next.n += 1;
+                next.value = next.value + (r - next.value) / (next.n as Value);
+            }
+
+            // RAVE
+            let mut j = i + 2;
+            while j < explored_moves.len() {
+                let mov = explored_moves[j];
+                if moves.contains(mov) {
+                    // I encountered this move later in the tree; according to AMAF record its value
+                    let next_idx;
+                    {
+                        let node = &self.all_nodes[explored_nodes[i] as usize];
+                        next_idx = node.children[moves.move_number(mov) as usize] as usize;
+                    }
+
+                    let mut next = &mut self.all_nodes[next_idx];
+                    next.rn += 1;
+                    next.rvalue = next.rvalue + (r - next.rvalue) / (next.rn as Value)
+                }
+                j += 2;
+            }
         }
     }
 
-    fn rollout(&mut self, mut pos: Position) -> Value {
+    fn rollout(&mut self, mut pos: Position, out_moves: &mut Vec<Idx>) -> Value {
         loop {
             if pos.is_won(pos.to_move.other()) {
                 return (pos.to_move != Side::X) as i32 as Value;
@@ -158,6 +218,7 @@ impl<R: Rng> MCTSWorker<R> {
             let j = self.rng.gen_range(0, n_moves);
             let mov = moves.nth_move(j as u8);
 
+            out_moves.push(mov);
             pos.make_move(mov);
         }
     }
@@ -170,7 +231,7 @@ impl<R: Rng> MCTSWorker<R> {
         let mut best_score = std::f32::NEG_INFINITY;
         let mut best_value = std::f32::NEG_INFINITY;
         let mut i = 1;
-        for mov in self.all_nodes[0].position.legal_moves() {
+        for mov in self.all_nodes[0].moves {
             let child = &self.all_nodes[i as usize];
             // TODO is this a good criterion
             let score = child.n as f32;
@@ -202,7 +263,7 @@ impl<R: Rng> MCTSWorker<R> {
             let mut best_value = std::f32::NEG_INFINITY;
             let mut best_i = 0;
             let mut i = node.children[0];
-            for mov in node.position.legal_moves() {
+            for mov in node.moves {
                 let child = &self.all_nodes[i as usize];
                 // TODO is this a good criterion
                 let score = child.n as f32;

@@ -39,11 +39,14 @@ fn main() {
             next_line();
         }
 
-        if opp_row != -1 {
-            // convert index
-            let index = (opp_col/3)*9 + (opp_col % 3) + (opp_row/3)*27 + 3*(opp_row %3);
-            pos.make_move(index as u8);
+        if opp_row == -1 {
+            // hardcoded center move
+            println!("4 4 auto");
+            pos.make_move(40);
+            continue;
         }
+        let index = (opp_col/3)*9 + (opp_col % 3) + (opp_row/3)*27 + 3*(opp_row %3);
+        pos.make_move(index as u8);
 
         let now = Instant::now();
         //let manager = Manager::from_position(pos);
@@ -68,8 +71,10 @@ fn main() {
             col,
             eval,
         );
+        /*
         for e in mcts.pv() {
             eprintln!("move {}; value {}", e.best_move, e.value);
         }
+        */
     }
 }

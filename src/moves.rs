@@ -173,6 +173,11 @@ pub struct Moves(u128);
 
 impl Moves {
     #[inline(always)]
+    pub fn new() -> Moves {
+        Moves(0)
+    }
+
+    #[inline(always)]
     pub fn size(&self) -> usize {
         self.0.count_ones() as usize
     }
@@ -204,8 +209,16 @@ impl Moves {
     
     // return any move
     #[inline(always)]
-    pub fn any(&self) -> Idx {
+    pub fn peek(&self) -> Idx {
+        debug_assert!(self.0 != 0);
         return self.0.trailing_zeros() as Idx;
+    }
+
+    #[inline(always)]
+    pub fn move_number(&self, mov: Idx) -> u8 {
+        debug_assert!((1 << mov) & self.0 != 0);
+        let mask = (1 << mov) - 1;
+        return (self.0 & mask).count_ones() as u8;
     }
 
     /* TODO use xorshift* */

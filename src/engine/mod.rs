@@ -63,7 +63,7 @@ impl Manager {
         // moves to explore before going parellel
         let till_parallel = std::cmp::min(n_moves / 2, 4);
 
-        let mut best = moves.any();
+        let mut best = moves.peek();
         debug_assert!(best != NULL_IDX);
         let mut best_score = SCORE_NEG_INF;
 
