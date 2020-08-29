@@ -1,4 +1,5 @@
 use crate::engine::utils::*;
+use crate::engine::eval::eval;
 use crate::moves::*;
 use rand::Rng;
 use std::time::Instant;
@@ -39,14 +40,15 @@ impl TreeNode {
 
     // return a seeded TreeNode, i.e. with pre-computed values and n, rn as confidence.
     fn from_heuristic(pos: Position) -> TreeNode {
+        let score = eval(&pos);
         TreeNode {
             position: pos,
             moves: Moves::new(),
             children: Vec::new(),
             n: 1,
-            value: 0.5,
-            rn: 1,
-            rvalue: 0.5
+            value: score,
+            rn: 0,
+            rvalue: score
         }
     }
 }
