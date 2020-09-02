@@ -1,7 +1,7 @@
 // codingame more like codinggae amirite
 use std::io::{self, BufRead};
 use std::time::{Instant};
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
 extern crate uttt;
@@ -55,7 +55,7 @@ fn main() {
         //let rng = SmallRng::seed_from_u64(12345);
         let rng = SmallRng::from_entropy();
         let mut mcts = MCTSWorker::new(pos, 0.85, rng);
-        let res = mcts.go(100);
+        let (res, n_rollouts) = mcts.go(100);
         let idx = res.best_move;
         let eval = res.value;
 
@@ -66,10 +66,11 @@ fn main() {
         let row = ((idx/9) / 3)*3 + (idx % 9)/3;
         pos.make_move(idx);
         println!(
-            "{} {} {}",
+            "{} {} {}/{}",
             row,
             col,
             eval,
+            n_rollouts,
         );
         /*
         for e in mcts.pv() {

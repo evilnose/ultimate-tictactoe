@@ -2,7 +2,6 @@
 use uttt::moves::*;
 use uttt::engine;
 use std::path::Path;
-use uttt::format;
 use engine::*;
 use std::time::Instant;
 
