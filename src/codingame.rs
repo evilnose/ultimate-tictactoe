@@ -1,7 +1,7 @@
 // codingame more like codinggae amirite
 use std::io::{self, BufRead};
 use std::time::{Instant};
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
 extern crate uttt;
@@ -24,6 +24,10 @@ fn next_line() -> String {
 }
 
 fn main() {
+    let c: f32 = match std::env::args().nth(1) {
+        Some(val) => val.parse().expect(&format!("Could not parse c value '{}'", val)[..]),
+        None => 0.85,
+    };
     init_moves();
     init_engine();
     let mut pos = Position::new();
@@ -39,11 +43,14 @@ fn main() {
             next_line();
         }
 
-        if opp_row != -1 {
-            // convert index
-            let index = (opp_col/3)*9 + (opp_col % 3) + (opp_row/3)*27 + 3*(opp_row %3);
-            pos.make_move(index as u8);
+        if opp_row == -1 {
+            // hardcoded center move
+            println!("4 4 auto");
+            pos.make_move(40);
+            continue;
         }
+        let index = (opp_col/3)*9 + (opp_col % 3) + (opp_row/3)*27 + 3*(opp_row %3);
+        pos.make_move(index as u8);
 
         let now = Instant::now();
         //let manager = Manager::from_position(pos);
@@ -51,25 +58,28 @@ fn main() {
         //let idx = res.best_move;
         //let rng = SmallRng::seed_from_u64(12345);
         let rng = SmallRng::from_entropy();
-        let mut mcts = MCTSWorker::new(pos, 0.85, rng);
-        let res = mcts.go(100);
+        let mut mcts = MCTSWorker::new(pos, c, rng);
+        let (res, n_rollouts) = mcts.go(100);
         let idx = res.best_move;
         let eval = res.value;
 
         let elapsed = now.elapsed();
-        eprintln!("actual elapsed: {} ms", elapsed.as_millis());
         //eprintln!("elapsed: {} ms. move: {}, eval: {}", elapsed.as_millis(), res.best_move, res.eval);
         let col = ((idx/9) % 3)*3 + (idx % 3);
         let row = ((idx/9) / 3)*3 + (idx % 9)/3;
         pos.make_move(idx);
         println!(
-            "{} {} {}",
+            "{} {} {}/{}",
             row,
             col,
             eval,
+            n_rollouts,
         );
+        eprintln!("actual elapsed: {} ms", elapsed.as_millis());
+        /*
         for e in mcts.pv() {
             eprintln!("move {}; value {}", e.best_move, e.value);
         }
+        */
     }
 }

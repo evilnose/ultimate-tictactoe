@@ -1,5 +1,4 @@
 use std::sync::mpsc;
-use std::collections::HashMap;
 
 extern crate uttt;
 
@@ -128,20 +127,4 @@ impl Client {
             _ => eprintln!("error: unknown search subcommand"),
         }
     }
-}
-
-fn parse_keyvalue(line: &str) -> HashMap<&str, &str> {
-    let mut map = HashMap::new();
-    let tokens = line.split(";");
-    for tok in tokens {
-        //let tok = tok.trim();
-        let kv = tok.split("=").collect::<Vec<&str>>();
-        if kv.len() != 2 {
-            eprintln!("error: key-value pair format incorrect");
-            continue;
-        }
-
-        map.insert(kv[0].trim(), kv[1].trim());
-    }
-    map
 }

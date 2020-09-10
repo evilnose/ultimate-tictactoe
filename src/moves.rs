@@ -173,6 +173,11 @@ pub struct Moves(u128);
 
 impl Moves {
     #[inline(always)]
+    pub fn new() -> Moves {
+        Moves(0)
+    }
+
+    #[inline(always)]
     pub fn size(&self) -> usize {
         self.0.count_ones() as usize
     }
@@ -204,8 +209,16 @@ impl Moves {
     
     // return any move
     #[inline(always)]
-    pub fn any(&self) -> Idx {
+    pub fn peek(&self) -> Idx {
+        debug_assert!(self.0 != 0);
         return self.0.trailing_zeros() as Idx;
+    }
+
+    #[inline(always)]
+    pub fn move_number(&self, mov: Idx) -> u8 {
+        debug_assert!((1 << mov) & self.0 != 0);
+        let mask = (1 << mov) - 1;
+        return (self.0 & mask).count_ones() as u8;
     }
 
     /* TODO use xorshift* */
@@ -300,12 +313,6 @@ impl Bitboard {
     #[inline(always)]
     pub fn captured_occ(&self) -> B33 {
         ((self.0 >> BOARD_SIZE) as B33) & BLOCK_OCC
-    }
-
-    #[inline(always)]
-    pub fn has_captured(&self, block_i: u8) -> bool {
-        debug_assert!(block_i < 9);
-        self.0 & (1 << (block_i + BOARD_SIZE)) != 0
     }
 
     #[inline(always)]

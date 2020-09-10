@@ -26,18 +26,6 @@ impl fmt::Debug for StopSearch {
 
 // keeps track of the current search state, e.g. node count, time,
 // etc. Used across alpha_beta_dfs
-struct SearchState {
-    nodes_searched: u64,
-}
-
-impl SearchState {
-    fn new() -> SearchState {
-        SearchState {
-            nodes_searched: 0,
-        }
-    }
-}
-
 pub struct SearchResult {
     pub best_move: Idx,
     pub eval: Score,
@@ -63,7 +51,7 @@ impl Manager {
         // moves to explore before going parellel
         let till_parallel = std::cmp::min(n_moves / 2, 4);
 
-        let mut best = moves.any();
+        let mut best = moves.peek();
         debug_assert!(best != NULL_IDX);
         let mut best_score = SCORE_NEG_INF;
 
@@ -235,12 +223,6 @@ impl Worker {
             eval_fn: eval, // default to eval; might change later
             stop: stop,
         }
-    }
-
-    // TODO implement this with threads
-    fn search_till_depth(&self, depth: u16) -> Result<Score, StopSearch> {
-        // no need for clone since self.position is implicitly copied
-        return self.alpha_beta_dfs(depth, self.position, SCORE_NEG_INF, SCORE_POS_INF);
     }
 
     /*

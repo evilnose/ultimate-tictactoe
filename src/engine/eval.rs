@@ -15,18 +15,64 @@ pub type EvalFn = fn(&Position) -> Score;
 //static mut BLOCK_SCORE_TABLE: [Score; 262144] = [0.0; 262144];
 
 // Scores associated with each situation in a block
+/*
+static SC_BLOCK_WON: Score = 4.0;
+static SC_NEED_1: Score = 3.0;
+static SC_NEED_2: Score = 1.5; // TODO this can't be the same as 3
+static SC_NEED_3: Score = 1.0;
+static SC_HOPELESS: Score = 0.0; // no chance of winning this block
+*/
 static SC_BLOCK_WON: Score = 8.0;
 static SC_NEED_1: Score = 3.0;
 static SC_NEED_2: Score = 0.5; // TODO this can't be the same as 3
 static SC_NEED_3: Score = 0.1;
 static SC_HOPELESS: Score = 0.0; // no chance of winning this block
+static BIG_SCORE_MULT: Score = 10.0;
                                  // some arbitrariliy decided sublinear function for 0-9; values capped at 2
 static SUBLINEAR_5: [Score; 10] = [1.0, 1.4, 1.7, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
 
 static mut BLOCK_SCORE_TABLE: [f32; N_BLOCK33] = [0.0; N_BLOCK33];
+static mut DOUBLE_MAX_SCORE: Score = 0.0;
 
+#[inline(always)]
+pub fn get_double_max_score() -> Score {
+    unsafe {
+        return DOUBLE_MAX_SCORE;
+    }
+}
+
+/*
 pub fn init_block_score_table() {
     unsafe {
+        // assuming SC_HOPELESS is 0
+        DOUBLE_MAX_SCORE = SC_BLOCK_WON * BIG_SCORE_MULT + 9.0 * SC_BLOCK_WON * 2.0;
+        for idx in 0..N_BLOCK33 {
+            let bs = get_block_state_by_idx(idx);
+            /*
+            BLOCK_SCORE_TABLE[idx] = match bs.min_needed() {
+                0 => SC_BLOCK_WON,
+                1 => SC_NEED_1 * SUBLINEAR_5[bs.n_routes() as usize],
+                2 => SC_NEED_2 * bs.n_routes() as Score,
+                3 => SC_NEED_3,
+                4 => SC_HOPELESS,
+                _ => panic!("min_needed is not in range [0, 4]"),
+            };
+            */
+            BLOCK_SCORE_TABLE[idx] = match bs.min_needed() {
+                0 => SC_BLOCK_WON,
+                1 => SC_NEED_1,
+                2 => SC_NEED_2,
+                3 => SC_NEED_3,
+                4 => SC_HOPELESS,
+                _ => panic!("min_needed is not in range [0, 4]"),
+            };
+        }
+    }
+}
+*/
+pub fn init_block_score_table() {
+    unsafe {
+        DOUBLE_MAX_SCORE = SC_BLOCK_WON * BIG_SCORE_MULT + 9.0 * SC_BLOCK_WON * 2.0;
         for idx in 0..N_BLOCK33 {
             let bs = get_block_state_by_idx(idx);
             /*
@@ -79,7 +125,7 @@ pub fn eval(pos: &Position) -> Score {
         pos.bitboards[0].captured_occ(),
         pos.bitboards[1].captured_occ(),
     );
-    ret += big_score * 10.0;
+    ret += big_score * BIG_SCORE_MULT;
 
     return ret * side2move;
     /*
