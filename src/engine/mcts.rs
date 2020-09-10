@@ -75,9 +75,11 @@ impl<R: Rng> MCTSWorker<R> {
             let localpos = node.position;
             explored_nodes.push(idx);
             if node.n == 0.0 {
+                /*
                 let node = &mut self.all_nodes[idx as usize];
                 node.value = 0.5 + eval(&localpos) * side_multiplier(localpos.to_move) / get_double_max_score();
                 node.n = 1.0;
+                */
                 break;
             }
             if node.children.len() == 0 {
